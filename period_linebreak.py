@@ -68,3 +68,77 @@ def prepare_tts_structure(text: str) -> str:
 
 def is_enumeration_only_block(block: str) -> bool:
     return bool(RE_ENUM_ONLY_LINE.match(block.strip()))
+
+
+_TERMINAL_PUNCT = re.compile(r'[.!?…]["\'""»)\]]*\s*$')
+_RE_LOWERCASE_START = re.compile(r"^[a-zà-ỹ0-9]", re.UNICODE)
+_MAX_SOFT_JOIN_LINE = 120
+
+
+def newline_sentence_boundary(text: str) -> str:
+    """
+    newline_sentence — mid-text line breaks without terminal punctuation become
+    sentence/paragraph boundaries for TTS chunking.
+
+    Example: "Chương 1\\nNội dung" → "Chương 1.\\nNội dung"
+    (appends '.' so split_text_for_tts treats the break as a paragraph end)
+    """
+    if not text or not text.strip():
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if not stripped:
+            out.append("")
+            continue
+        if i < len(lines) - 1 and not _TERMINAL_PUNCT.search(stripped):
+            stripped = stripped.rstrip(".") + "."
+        out.append(stripped)
+    return "\n".join(out)
+
+
+def _should_join_soft_break(prev: str, nxt: str) -> bool:
+    """True when nxt looks like a PDF-wrapped continuation of prev."""
+    if _TERMINAL_PUNCT.search(prev):
+        return False
+    if len(prev) > _MAX_SOFT_JOIN_LINE or len(nxt) > _MAX_SOFT_JOIN_LINE:
+        return False
+    if not _RE_LOWERCASE_START.match(nxt):
+        return False
+    return True
+
+
+def join_soft_breaks(text: str) -> str:
+    """
+    join_soft_breaks — merge lines likely split by PDF extraction (opposite of newline_sentence).
+
+    Heuristics: previous line has no terminal punctuation, next line is short-ish and
+    starts lowercase/digit (mid-sentence continuation).
+
+    Example: "câu bị ngắt giữa chừng\\nở đây tiếp" → "câu bị ngắt giữa chừng ở đây tiếp"
+    """
+    if not text or "\n" not in text:
+        return text
+    lines = text.split("\n")
+    merged: list[str] = []
+    buf = ""
+    for line in lines:
+        if not line.strip():
+            if buf:
+                merged.append(buf)
+                buf = ""
+            merged.append("")
+            continue
+        piece = line.strip()
+        if not buf:
+            buf = piece
+            continue
+        if _should_join_soft_break(buf, piece):
+            buf = f"{buf} {piece}"
+        else:
+            merged.append(buf)
+            buf = piece
+    if buf:
+        merged.append(buf)
+    return "\n".join(merged)

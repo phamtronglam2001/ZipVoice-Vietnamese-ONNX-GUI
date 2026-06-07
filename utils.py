@@ -514,7 +514,13 @@ def post_process_text(text: str, *, apply_lower: bool = True) -> str:
     ]:
         text = text.replace(bad, good)
     text = text.replace('"', "")
-    cleaned = " ".join(text.split())
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.lower() if apply_lower else cleaned
 
 
@@ -539,8 +545,11 @@ def prepare_for_tts(
     text: str,
     pipeline: list[str] | str | None = None,
     mode: NormalizeInputMode = "raw",
+    *,
+    already_normalized: bool = False,
 ) -> str:
-    if parse_input_mode(mode) == "prepared":
+    """Run pipeline on a text fragment. Prefer normalize_full_document + split for TTS."""
+    if already_normalized or parse_input_mode(mode) == "prepared":
         return prepare_tts_text_passthrough(text)
     return prepare_tts_text(text, pipeline or [])
 
@@ -592,6 +601,8 @@ def export_normalized_text_file(
 NORMALIZE_BACKENDS: dict[str, str] = {
     "none": "Không (chỉ dọn dấu câu)",
     "vieneu": "VieNeu (dọn punctuation/noise)",
+    "join_soft_breaks": "Gộp xuống dòng PDF (dòng ngắn, viết thường)",
+    "newline_sentence": "Xuống dòng → ranh giới câu (thêm chấm)",
     "period_break": "Cấu trúc TTS (ngoặc→phẩy, số+chấm→xuống dòng)",
     "vinorm": "vinorm (TTSnorm)",
     "vietnormalizer": "vietnormalizer",
@@ -602,6 +613,8 @@ NORMALIZE_BACKENDS: dict[str, str] = {
 NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "none": "— Không —",
     "vieneu": NORMALIZE_BACKENDS["vieneu"],
+    "join_soft_breaks": NORMALIZE_BACKENDS["join_soft_breaks"],
+    "newline_sentence": NORMALIZE_BACKENDS["newline_sentence"],
     "period_break": NORMALIZE_BACKENDS["period_break"],
     "vinorm": NORMALIZE_BACKENDS["vinorm"],
     "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
@@ -614,7 +627,8 @@ NORMALIZE_ADD_CHOICES: dict[str, str] = {
 }
 
 DEFAULT_NORMALIZE_PIPELINE: list[str] = []
-AUDIOBOOK_PRESET_PIPELINE: list[str] = ["vieneu", "period_break", "vinorm"]
+# Full pipeline: all add-dropdown steps, bottom-to-top UI order (sea_g2p runs first).
+AUDIOBOOK_PRESET_PIPELINE: list[str] = list(reversed(list(NORMALIZE_ADD_CHOICES)))
 CHECKPOINT_SUBDIR = "latest"
 
 _sea_g2p_normalizer = None
@@ -636,6 +650,18 @@ def _normalize_period_break(text: str) -> str:
     from period_linebreak import prepare_tts_structure
 
     return prepare_tts_structure(text)
+
+
+def _normalize_newline_sentence(text: str) -> str:
+    from period_linebreak import newline_sentence_boundary
+
+    return newline_sentence_boundary(text)
+
+
+def _normalize_join_soft_breaks(text: str) -> str:
+    from period_linebreak import join_soft_breaks
+
+    return join_soft_breaks(text)
 
 
 def _normalize_vinorm(text: str) -> str:
@@ -675,6 +701,10 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
             return _normalize_vieneu(text)
         if key == "period_break":
             return _normalize_period_break(text)
+        if key == "newline_sentence":
+            return _normalize_newline_sentence(text)
+        if key == "join_soft_breaks":
+            return _normalize_join_soft_breaks(text)
         if key == "vinorm":
             return _normalize_vinorm(text)
         if key == "vietnormalizer":
@@ -805,6 +835,7 @@ def pipeline_move(
 
 
 def normalize_text_pipeline(text: str, backends: list[str]) -> str:
+    """Apply pipeline steps sequentially: text₀ → step₁ → text₁ → …"""
     result = text
     for backend in backends:
         result = normalize_text(result, backend)
@@ -833,7 +864,7 @@ def preview_normalize_output(
     pipeline = build_normalize_pipeline(pipeline_steps)
     label = format_normalize_pipeline(pipeline)
     normalized = normalize_full_document(raw, pipeline, input_mode)
-    chunks = split_text_for_tts(raw, max_chars=int(chunk_max_chars))
+    chunks = split_text_for_tts(normalized, max_chars=int(chunk_max_chars))
 
     mode_label = INPUT_MODE_CHOICES.get(input_mode, input_mode)
     lines = [
@@ -859,8 +890,7 @@ def preview_normalize_output(
     if len(chunks) > 1:
         lines.extend(["", "── Xem trước từng chunk (5 chunk đầu) ──"])
         for i, ch in enumerate(chunks[:5]):
-            chunk_norm = prepare_for_tts(ch.text, pipeline, input_mode)
-            lines.append(f"[{i + 1}/{len(chunks)}] {chunk_norm}")
+            lines.append(f"[{i + 1}/{len(chunks)}] {ch.text}")
         if len(chunks) > 5:
             lines.append(f"… và {len(chunks) - 5} chunk nữa")
 

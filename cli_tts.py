@@ -206,8 +206,11 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
     )
 
     engine = OnnxTTSEngine.get(use_int8=preset.use_int8)
+    normalized_doc = normalize_full_document(
+        gen_text, preset.pipeline, tts_input_mode
+    )
     tts_chunks = split_text_for_tts(
-        gen_text,
+        normalized_doc,
         max_chars=preset.chunk_max_chars,
         pause_sentence=preset.pause_sentence,
         pause_paragraph=preset.pause_paragraph,
@@ -265,7 +268,7 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
 
         prompt_normalized = prepare_tts_text(resolved_ref_text, preset.pipeline)
         normalized = prepare_for_tts(
-            tts_chunk.text, preset.pipeline, tts_input_mode
+            tts_chunk.text, preset.pipeline, tts_input_mode, already_normalized=True
         )
         if not normalized.strip():
             wave_parts[i] = np.array([], dtype=np.float32)

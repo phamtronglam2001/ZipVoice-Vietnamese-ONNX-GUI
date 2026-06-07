@@ -68,6 +68,7 @@ from utils import (  # noqa: E402
     INPUT_MODE_CHOICES,
     export_normalized_text_file,
     parse_input_mode,
+    normalize_full_document,
     prepare_for_tts,
     prepare_tts_text,
     preprocess_ref_audio_text,
@@ -419,8 +420,11 @@ def infer_tts(
         )
 
         engine = OnnxTTSEngine.get(use_int8=use_int8)
+        normalized_doc = normalize_full_document(
+            gen_text, norm_pipeline, tts_input_mode
+        )
         tts_chunks = split_text_for_tts(
-            gen_text,
+            normalized_doc,
             max_chars=int(chunk_max_chars),
             pause_sentence=float(pause_sentence),
             pause_paragraph=float(pause_paragraph),
@@ -485,7 +489,7 @@ def infer_tts(
 
             prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
             normalized = prepare_for_tts(
-                tts_chunk.text, norm_pipeline, tts_input_mode
+                tts_chunk.text, norm_pipeline, tts_input_mode, already_normalized=True
             )
             if not normalized.strip():
                 logger.warning(

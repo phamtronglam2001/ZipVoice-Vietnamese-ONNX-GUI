@@ -166,12 +166,14 @@ See `preset_io.py`, `cli_tts.py`, `run_cli.bat`.
 
 ## Normalization pipeline (ordered steps)
 
-Add, remove, and reorder steps. Duplicate backends are rejected.
+Add, remove, and reorder steps on the GUI. **Each step receives the previous step's output** (`text₀ → step₁ → text₁ → …`). No step-count limit; duplicate backends are rejected.
 
 | Backend | pip required? | Role |
 |---------|---------------|------|
 | **VieNeu** | No (built-in) | Port of [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) `core_utils` |
-| **TTS structure** | No (built-in) | `period_linebreak.py` — brackets→commas; list line breaks |
+| **Join PDF line breaks** | No (built-in) | `join_soft_breaks` — merge short lowercase lines (OCR/PDF wraps) |
+| **Newline → sentence** | No (built-in) | `newline_sentence` — `Chương 1\nNội dung` → `Chương 1.\nNội dung` |
+| **TTS structure** | No (built-in) | `period_break` — brackets→commas; `một. next` → `một.\nnext` |
 | **vinorm** | `pip install vinorm` | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) |
 | **vietnormalizer** | pip | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) |
 | **sea-g2p Normalizer** | pip | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) — Normalizer only |
@@ -187,13 +189,16 @@ Add, remove, and reorder steps. Duplicate backends are rejected.
 
 Supports `()`, `[]`, and `{}`.
 
+**TTS / preview flow:** normalize the **full document** once (`normalize_full_document`) → **split** (`split_text_for_tts`) → per-chunk light cleanup only. **Preview normalization** shows chained pipeline output with preserved `\n` and added periods.
+
 ### Suggested pipelines
 
-| Content type | Step 1 | Step 2 | Step 3 |
-|--------------|--------|--------|--------|
-| GUI default | VieNeu | TTS structure | (none) |
-| Numbers / symbols | VieNeu | TTS structure | vinorm or sea-g2p |
-| Noisy OCR | VieNeu | vietnormalizer | TTS structure |
+| Content type | Suggested chain |
+|--------------|-----------------|
+| GUI default | *(empty pipeline)* |
+| Audiobook | VieNeu → TTS structure → vinorm (or sea-g2p) |
+| OCR / PDF line wraps | Join PDF → VieNeu → TTS structure |
+| Chapter headings | add **Newline → sentence** before or after TTS structure |
 
 All backends output **plain text**. ZipVoice phonemizes via Espeak separately, so chaining is safe.
 

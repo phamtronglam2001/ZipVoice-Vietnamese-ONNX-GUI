@@ -30,7 +30,15 @@ PRESETS_DIR = ROOT / "profiles"
 SCHEMA_VERSION = 1
 
 VALID_PIPELINE_STEPS = frozenset(
-    {"vieneu", "period_break", "vinorm", "vietnormalizer", "sea_g2p"}
+    {
+        "vieneu",
+        "join_soft_breaks",
+        "newline_sentence",
+        "period_break",
+        "vinorm",
+        "vietnormalizer",
+        "sea_g2p",
+    }
 )
 
 
@@ -452,7 +460,7 @@ def default_none_preset() -> PresetConfig:
 def default_sach_preset() -> PresetConfig:
     return PresetConfig(
         name="Sách — Ái Vy",
-        description="Audiobook: VieNeu + cấu trúc TTS + vinorm, giọng Ái Vy",
+        description="Audiobook: toàn bộ chuẩn hóa (sea-g2p → … → VieNeu), giọng Ái Vy",
         voice_mode="bundled",
         voice_id="ai_vy",
         pipeline=list(AUDIOBOOK_PRESET_PIPELINE),

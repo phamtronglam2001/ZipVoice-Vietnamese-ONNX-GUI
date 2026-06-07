@@ -71,6 +71,8 @@ Kiến trúc [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) (Siuzdak et a
 |---------|----------------|----------------|
 | **VieNeu** | [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) — `vieneu_utils/core_utils.py` | `vieneu_text.py` (built-in) |
 | **Cấu trúc TTS** | Viết trong repo này (Pham Trong Lam) | `period_linebreak.py` (built-in) |
+| **Xuống dòng → câu** | Viết trong repo này | `period_linebreak.py` (`newline_sentence`) |
+| **Gộp xuống dòng PDF** | Viết trong repo này | `period_linebreak.py` (`join_soft_breaks`) |
 | **vinorm** | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) | `pip install vinorm` |
 | **vietnormalizer** | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) | `pip install vietnormalizer` |
 | **sea-g2p Normalizer** | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | `pip install sea-g2p` — chỉ Normalizer |
@@ -213,14 +215,16 @@ run_cli.bat synthesize -p sach -f output/book_normalized.txt --skip-normalize -o
 
 ---
 
-## Pipeline chuẩn hóa (danh sách bước)
+## Pipeline chuẩn hóa (chuỗi bước tuần tự)
 
-Thêm/xóa/sắp xếp bước theo thứ tự. Không cho trùng cùng một backend.
+Thêm/xóa/sắp xếp bước trên GUI — **mỗi bước nhận output của bước trước** (`text₀ → bước₁ → text₁ → …`). Không giới hạn số bước; không cho trùng cùng backend.
 
 | Backend | Cài pip? | Vai trò |
 |---------|----------|---------|
 | **VieNeu** | Không (built-in) | Port [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) `core_utils` |
-| **Cấu trúc TTS** | Không (built-in) | `period_linebreak.py` — ngoặc→phẩy; mục đánh số→xuống dòng |
+| **Gộp xuống dòng PDF** | Không (built-in) | `join_soft_breaks` — gộp dòng ngắn viết thường (OCR/PDF) |
+| **Xuống dòng → câu** | Không (built-in) | `newline_sentence` — `Chương 1\nNội dung` → `Chương 1.\nNội dung` |
+| **Cấu trúc TTS** | Không (built-in) | `period_break` — ngoặc→phẩy; `một. đoạn` → `một.\nđoạn` |
 | **vinorm** | `pip install vinorm` | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) |
 | **vietnormalizer** | pip | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) |
 | **sea-g2p Normalizer** | pip | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) — chỉ Normalizer |
@@ -234,13 +238,16 @@ Thêm/xóa/sắp xếp bước theo thứ tự. Không cho trùng cùng một ba
 | Số + chấm → xuống dòng | `một. đọc đoạn` | `một.` + xuống dòng + `đọc đoạn` |
 | Nghỉ sau mục đánh số | `một.` (đoạn riêng) | ~**1.0 s** trước đoạn tiếp |
 
+**Luồng TTS / preview:** chuẩn hóa **toàn bộ** văn bản (`normalize_full_document`) → **chia chunk** (`split_text_for_tts`) → mỗi chunk chỉ dọn dấu câu nhẹ. Ô **Xem trước** hiển thị output chuỗi pipeline, **giữ `\n`** và dấu `.` đã thêm.
+
 ### Gợi ý pipeline
 
-| Loại văn bản | Bước 1 | Bước 2 | Bước 3 |
-|--------------|--------|--------|--------|
-| Mặc định GUI | *(pipeline trống)* | — | — |
-| Sách nhiều số | VieNeu | Cấu trúc TTS | vinorm hoặc sea-g2p |
-| OCR / typography lỗi | VieNeu | vietnormalizer | Cấu trúc TTS |
+| Loại văn bản | Gợi ý |
+|--------------|-------|
+| Mặc định GUI | *(pipeline trống)* |
+| Sách / audiobook | VieNeu → Cấu trúc TTS → vinorm (hoặc sea-g2p) |
+| OCR / PDF ngắt dòng | Gộp PDF → VieNeu → Cấu trúc TTS |
+| Tiêu đề chương | thêm **Xuống dòng → câu** trước hoặc sau Cấu trúc TTS |
 
 > **Lưu ý:** ZipVoice chỉ dùng **Espeak** để phonemize. Các bước trên đều trả về **text** — có thể xếp chuỗi an toàn.
 
