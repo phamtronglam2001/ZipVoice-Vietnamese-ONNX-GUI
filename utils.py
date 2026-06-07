@@ -361,6 +361,7 @@ def post_process_text(text: str) -> str:
 
 NORMALIZE_BACKENDS: dict[str, str] = {
     "none": "Không (chỉ dọn dấu câu)",
+    "vieneu": "VieNeu (dọn punctuation/noise)",
     "vinorm": "vinorm (TTSnorm)",
     "vietnormalizer": "vietnormalizer",
     "sea_g2p": "sea-g2p Normalizer",
@@ -369,6 +370,7 @@ NORMALIZE_BACKENDS: dict[str, str] = {
 # Dropdown choices for pipeline steps (bước 2–3 có thể chọn "none")
 NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "none": "— Không —",
+    "vieneu": NORMALIZE_BACKENDS["vieneu"],
     "vinorm": NORMALIZE_BACKENDS["vinorm"],
     "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
     "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
@@ -381,6 +383,12 @@ _vietnamese_normalizer = None
 def _strip_sea_g2p_en_tags(text: str) -> str:
     """sea-g2p bọc tiếng Anh bằng <en>; espeak ZipVoice không hiểu tag này."""
     return re.sub(r"</?en>", "", text)
+
+
+def _normalize_vieneu(text: str) -> str:
+    from vieneu_text import clean_text_noise
+
+    return clean_text_noise(text)
 
 
 def _normalize_vinorm(text: str) -> str:
@@ -416,6 +424,8 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
     if key in ("none", "off", "không"):
         return text
     try:
+        if key == "vieneu":
+            return _normalize_vieneu(text)
         if key == "vinorm":
             return _normalize_vinorm(text)
         if key == "vietnormalizer":
@@ -431,7 +441,8 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
             "sea_g2p": "sea-g2p",
         }.get(key, key)
         raise ImportError(
-            f"Chưa cài `{pkg}`. Chạy: pip install {pkg}"
+            f"Chưa cài `{pkg}` (không có sẵn trong ZipVoice — package PyPI riêng). "
+            f"Chạy: pip install {pkg}  hoặc dùng bước `VieNeu` / `Không`."
         ) from exc
     except Exception:
         logger.exception("normalize_text failed | backend=%s", key)

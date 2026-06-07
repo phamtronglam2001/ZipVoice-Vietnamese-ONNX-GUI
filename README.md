@@ -31,7 +31,7 @@ Mở http://127.0.0.1:7862
 - 9 giọng mẫu trong `assets/ref_audio/` + `ref_info.json`
 - Upload giọng mẫu + transcript bắt buộc (không ASR)
 - Upload `.txt` / `.md` cho **sách dài**
-- **Chuẩn hóa text (pipeline):** chọn tối đa 3 bước lần lượt — vinorm → vietnormalizer → sea-g2p (hoặc bất kỳ thứ tự nào)
+- **Chuẩn hóa text (pipeline):** tối đa 3 bước — **VieNeu** (built-in) / vinorm / vietnormalizer / sea-g2p
 - **Xem trước chuẩn hóa:** nút riêng + ô kết quả trước khi TTS (không load model)
 - **Chia chunk thông minh:** đoạn → câu → gộp đến max ký tự; nghỉ 0.35s/câu, 0.65s/đoạn, 1.2s/chương
 - Xuất WAV / MP3 → `output/`
@@ -39,7 +39,9 @@ Mở http://127.0.0.1:7862
 
 ### Pipeline chuẩn hóa
 
-Chọn **Bước 1 → 2 → 3** (mỗi bước: không / vinorm / vietnormalizer / sea-g2p). Cả 3 thư viện chỉ dùng **Normalizer** (đầu ra là text, không phoneme) nên có thể xếp chuỗi — ví dụ `vinorm → sea-g2p` cho sách nhiều số. Không cho phép trùng thư viện.
+Chọn **Bước 1 → 2 → 3**. **VieNeu** port từ `VieNeu-TTS` (`clean_text_noise` — dọn dấu câu, không G2P). NSW: vinorm / vietnormalizer / sea-g2p (pip). Gợi ý sách: `VieNeu → vinorm → sea-g2p`.
+
+**vinorm không có trong ZipVoice** — đó là package PyPI riêng (`pip install vinorm`), GUI thêm vào pipeline tùy chọn.
 
 ## Cấu trúc
 

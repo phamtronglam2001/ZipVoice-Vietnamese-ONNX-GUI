@@ -312,14 +312,14 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             with gr.Column(scale=2):
                 gr.Markdown(
                     "### Chuẩn hóa text (pipeline, tối đa 3 bước)\n"
-                    "Áp dụng lần lượt A → B → C. Cả 3 thư viện chỉ trả về **text** "
-                    "(không phoneme) nên có thể xếp chuỗi."
+                    "Áp dụng lần lượt A → B → C. **VieNeu** = dọn punctuation (built-in). "
+                    "vinorm/sea-g2p/vietnormalizer = NSW (cần pip). Không trùng bước."
                 )
                 with gr.Row():
                     norm_step1 = gr.Dropdown(
                         label="Bước 1",
                         choices=_norm_choices,
-                        value="vinorm",
+                        value="vieneu",
                     )
                     norm_step2 = gr.Dropdown(
                         label="Bước 2 (tuỳ chọn)",

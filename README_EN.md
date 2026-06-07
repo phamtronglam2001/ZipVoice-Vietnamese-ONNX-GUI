@@ -55,17 +55,18 @@ Vietnamese TTS benefits from normalizing non-standard words (numbers, dates, sym
 
 | Step | Library | Role |
 |------|---------|------|
-| 1–3 (optional chain) | **vinorm** (TTSnorm) | Fast, lightweight NSW normalization |
+| 1–3 (optional chain) | **VieNeu** (built-in) | Punctuation / spacing cleanup from VieNeu-TTS `core_utils` |
+| | **vinorm** (TTSnorm) | NSW normalization — **separate PyPI package**, not bundled in ZipVoice |
 | | **vietnormalizer** | Broader Vietnamese text cleanup |
-| | **sea-g2p Normalizer** | Rich NSW rules (G2P module is **not** used) |
+| | **sea-g2p Normalizer** | Rich NSW rules (same as VieNeu-TTS; G2P **not** used here) |
 
 **Why chaining is safe here:** all three libraries expose a *text-in, text-out* normalizer. ZipVoice uses Espeak phonemization separately. We never pipe phoneme strings through a second normalizer, so a pipeline such as `vinorm → vietnormalizer → sea-g2p` is valid.
 
 Recommended starting points:
 
-- General prose: `vinorm` only
-- Mixed numerals and symbols: `vinorm → sea-g2p`
-- Noisy OCR or legacy typography: `vietnormalizer → vinorm`
+- General prose: `VieNeu` only (no extra pip packages)
+- Mixed numerals and symbols: `VieNeu → vinorm → sea-g2p`
+- Noisy OCR: `VieNeu → vietnormalizer`
 
 Duplicate steps in the pipeline are rejected by the UI.
 
