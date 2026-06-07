@@ -1,0 +1,13 @@
+{
+  "mode": "int4",
+  "text_encoder": "int4",
+  "fm_decoder": "int4",
+  "filenames": {
+    "text_encoder": "text_encoder_int4.onnx",
+    "fm_decoder": "fm_decoder_int4.onnx"
+  },
+  "created": [
+    "text_encoder_int4.onnx",
+    "fm_decoder_int4.onnx"
+  ]
+}

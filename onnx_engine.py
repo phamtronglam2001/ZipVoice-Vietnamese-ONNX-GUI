@@ -19,12 +19,16 @@ from config import (
     ONNX_DIR,
     ONNX_MODEL_JSON,
     ONNX_TOKENS,
+    VOCODER_DIR,
     VOCODER_ONNX,
     apply_cpu_env,
     is_force_cpu,
+    is_onnx_gpu_env,
     onnx_files,
     onnx_quant_mode,
+    pytorch_vocoder_ready,
 )
+from onnx_providers import create_inference_session, provider_status_message
 from onnx_quant import QuantComponent, format_sizes
 from espeak_tokenizer import EspeakTokenizer
 from vocos_fbank import VocosFbank
@@ -66,19 +70,26 @@ class OnnxModel:
         text_encoder_path: str,
         fm_decoder_path: str,
         num_thread: int = 1,
+        *,
+        use_gpu: bool = False,
+        quant_mode: str | None = None,
     ):
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = num_thread
         opts.intra_op_num_threads = num_thread
-        self.text_encoder = ort.InferenceSession(
+        self.text_encoder = create_inference_session(
             text_encoder_path,
             sess_options=opts,
-            providers=["CPUExecutionProvider"],
+            use_gpu=use_gpu,
+            quant_mode=quant_mode,
+            component="text_encoder",
         )
-        self.fm_decoder = ort.InferenceSession(
+        self.fm_decoder = create_inference_session(
             fm_decoder_path,
             sess_options=opts,
-            providers=["CPUExecutionProvider"],
+            use_gpu=use_gpu,
+            quant_mode=quant_mode,
+            component="fm_decoder",
         )
         meta = self.fm_decoder.get_modelmeta().custom_metadata_map
         self.feat_dim = int(meta["feat_dim"])
@@ -187,19 +198,49 @@ def onnx_sample(
     return pred
 
 
-def _load_vocoder() -> ort.InferenceSession:
+def _load_vocoder_onnx(*, use_gpu: bool = False) -> ort.InferenceSession:
     opts = ort.SessionOptions()
     num_thread = int(os.environ.get("ZIPVOICE_ONNX_THREADS", "1"))
     opts.inter_op_num_threads = num_thread
     opts.intra_op_num_threads = num_thread
-    return ort.InferenceSession(
+    return create_inference_session(
         str(VOCODER_ONNX),
         sess_options=opts,
-        providers=["CPUExecutionProvider"],
+        use_gpu=use_gpu,
+        component="vocoder",
     )
 
 
-def _vocos_decode(vocoder: ort.InferenceSession, mel_bct: np.ndarray) -> np.ndarray:
+def _pick_torch_device():
+    import torch
+
+    if is_force_cpu() or not torch.cuda.is_available():
+        return torch.device("cpu")
+    return torch.device("cuda")
+
+
+def _load_vocoder_pytorch():
+    import torch
+    from vocos import Vocos
+
+    if not pytorch_vocoder_ready():
+        raise FileNotFoundError(
+            f"Thiếu PyTorch Vocos weights trong `{VOCODER_DIR}`.\n"
+            "Cần `config.yaml` + `pytorch_model.bin` (charactr/vocos-mel-24khz).\n"
+            "Chạy: python download_models.py --pytorch-vocoder\n"
+            "Hoặc copy từ repo PyTorch ZipVoice-Vietnamese-GUI."
+        )
+    device = _pick_torch_device()
+    vocoder = Vocos.from_hparams(str(VOCODER_DIR / "config.yaml"))
+    weights = VOCODER_DIR / "pytorch_model.bin"
+    if not weights.is_file():
+        weights = VOCODER_DIR / "model.safetensors"
+    state_dict = torch.load(weights, weights_only=True, map_location="cpu")
+    vocoder.load_state_dict(state_dict)
+    return vocoder.to(device).eval(), device
+
+
+def _vocos_decode_onnx(vocoder: ort.InferenceSession, mel_bct: np.ndarray) -> np.ndarray:
     """mel (batch, channels, time) -> waveform numpy 1d."""
     mel_frames = int(mel_bct.shape[2]) if mel_bct.ndim == 3 else 0
     logger.debug("mel shape before vocoder: %s", mel_bct.shape)
@@ -208,6 +249,21 @@ def _vocos_decode(vocoder: ort.InferenceSession, mel_bct: np.ndarray) -> np.ndar
         return np.array([], dtype=np.float32)
     mag, x, y = vocoder.run(None, {"mels": mel_bct.astype(np.float32)})
     return vocos_istft(mag, x, y)
+
+
+def _vocos_decode_pytorch(vocoder, device, mel_bct: np.ndarray) -> np.ndarray:
+    """mel (batch, channels, time) -> waveform numpy 1d."""
+    import torch
+
+    mel_frames = int(mel_bct.shape[2]) if mel_bct.ndim == 3 else 0
+    logger.debug("mel shape before PyTorch vocoder: %s", mel_bct.shape)
+    if mel_frames < MIN_VOCODER_MEL_FRAMES:
+        logger.warning("skip vocoder: mel frames=%d", mel_frames)
+        return np.array([], dtype=np.float32)
+    mel_t = torch.from_numpy(mel_bct.astype(np.float32)).to(device)
+    with torch.inference_mode():
+        wav = vocoder.decode(mel_t).squeeze(1).clamp(-1, 1)
+    return wav.squeeze(0).cpu().numpy()
 
 
 class OnnxTTSEngine:
@@ -219,7 +275,13 @@ class OnnxTTSEngine:
         *,
         use_int8: bool | None = None,
         mixed_config: dict[str, QuantComponent] | None = None,
+        use_gpu: bool | None = None,
+        use_pytorch_vocoder: bool = True,
     ) -> None:
+        self.use_pytorch_vocoder = bool(use_pytorch_vocoder)
+        self.use_gpu = is_onnx_gpu_env() if use_gpu is None else bool(use_gpu)
+        if is_force_cpu():
+            self.use_gpu = False
         self.quant_mode = onnx_quant_mode() if quant_mode is None else quant_mode
         if use_int8 is not None and quant_mode is None:
             from onnx_quant import normalize_quant_mode
@@ -238,14 +300,25 @@ class OnnxTTSEngine:
             str(ONNX_DIR / te_name),
             str(ONNX_DIR / fm_name),
             num_thread=num_thread,
+            use_gpu=self.use_gpu,
+            quant_mode=self.quant_mode,
         )
-        self.vocoder = _load_vocoder()
+        self._torch_device = None
+        if self.use_pytorch_vocoder:
+            self.vocoder, self._torch_device = _load_vocoder_pytorch()
+            vocoder_note = "PyTorch Vocos"
+        else:
+            self.vocoder = _load_vocoder_onnx(use_gpu=self.use_gpu)
+            vocoder_note = "ONNX wetdog + librosa ISTFT"
         self.sampling_rate = model_config["feature"]["sampling_rate"]
         size_note = format_sizes(ONNX_DIR, (te_name, fm_name))
+        provider_note = provider_status_message(self.use_gpu)
         logger.info(
-            "OnnxTTSEngine ready | mode=%s | %s | vocoder=onnx+librosa",
+            "OnnxTTSEngine ready | mode=%s | device=%s | %s | vocoder=%s",
             self.quant_mode,
+            provider_note,
             size_note,
+            vocoder_note,
         )
 
     @property
@@ -260,27 +333,46 @@ class OnnxTTSEngine:
         *,
         use_int8: bool | None = None,
         mixed_config: dict[str, QuantComponent] | None = None,
+        use_gpu: bool | None = None,
+        use_pytorch_vocoder: bool = True,
     ) -> "OnnxTTSEngine":
         from onnx_quant import normalize_quant_mode
 
         want_mode = onnx_quant_mode() if quant_mode is None else quant_mode
         if use_int8 is not None and quant_mode is None:
             want_mode = normalize_quant_mode(None, use_int8=use_int8)
+        want_gpu = is_onnx_gpu_env() if use_gpu is None else bool(use_gpu)
+        if is_force_cpu():
+            want_gpu = False
+        want_pytorch_vocoder = bool(use_pytorch_vocoder)
 
-        cache_key = (want_mode, tuple(sorted((mixed_config or {}).items())))
+        cache_key = (
+            want_mode,
+            tuple(sorted((mixed_config or {}).items())),
+            want_gpu,
+            want_pytorch_vocoder,
+        )
         if (
             cls._instance is None
             or cls._instance.quant_mode != want_mode
             or tuple(sorted((cls._instance.mixed_config or {}).items())) != cache_key[1]
+            or cls._instance.use_gpu != want_gpu
+            or cls._instance.use_pytorch_vocoder != want_pytorch_vocoder
         ):
+            device = provider_status_message(want_gpu)
+            vocoder_label = (
+                "PyTorch Vocos" if want_pytorch_vocoder else "ONNX Vocos + librosa ISTFT"
+            )
             print(
-                f"[ZipVoice ONNX] Loading (mode={want_mode}) — "
-                "ZipVoice=ONNX, vocoder=ONNX Vocos + librosa ISTFT..."
+                f"[ZipVoice ONNX] Loading (mode={want_mode}, device={device}, "
+                f"vocoder={vocoder_label})..."
             )
             cls._instance = cls(
                 quant_mode=want_mode,
                 use_int8=use_int8,
                 mixed_config=mixed_config,
+                use_gpu=want_gpu,
+                use_pytorch_vocoder=want_pytorch_vocoder,
             )
             print("[ZipVoice ONNX] Ready.")
         return cls._instance
@@ -332,7 +424,10 @@ class OnnxTTSEngine:
 
         # (B, T, C) -> (B, C, T) for Vocos
         mel = np.transpose(pred_features, (0, 2, 1)) / FEAT_SCALE
-        wav = _vocos_decode(self.vocoder, mel.astype(np.float32))
+        if self.use_pytorch_vocoder:
+            wav = _vocos_decode_pytorch(self.vocoder, self._torch_device, mel.astype(np.float32))
+        else:
+            wav = _vocos_decode_onnx(self.vocoder, mel.astype(np.float32))
 
         if prompt_rms < TARGET_RMS:
             wav = wav * (prompt_rms / TARGET_RMS)

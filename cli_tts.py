@@ -27,11 +27,24 @@ logger = setup_runtime_logging(name="zipvoice_cli")
 DEFAULT_PROFILE = "none"
 
 
-def _ensure_runtime() -> None:
-    if not models_ready():
+def _ensure_runtime(use_pytorch_vocoder: bool = True) -> None:
+    if not models_ready(use_pytorch_vocoder=use_pytorch_vocoder):
         print("[ERROR] Runtime not ready. Run install_cpu.bat first.", file=sys.stderr)
         if not onnx_ready():
             print("[ERROR] Missing ONNX files in models/onnx/", file=sys.stderr)
+        if use_pytorch_vocoder:
+            from config import pytorch_vocoder_ready
+
+            if not pytorch_vocoder_ready():
+                print(
+                    "[ERROR] Missing PyTorch Vocos in models/vocoder/ "
+                    "(config.yaml + pytorch_model.bin).",
+                    file=sys.stderr,
+                )
+                print(
+                    "Run: python download_models.py --pytorch-vocoder",
+                    file=sys.stderr,
+                )
         sys.exit(1)
 
 
@@ -139,22 +152,18 @@ def cmd_preview(args: argparse.Namespace) -> int:
 
 
 def cmd_synthesize(args: argparse.Namespace) -> int:
-    import gc
     import numpy as np
 
-    from config import is_force_cpu
+    from chunk_synthesis import clamp_parallel_workers, synthesize_tts_chunks
     from onnx_engine import OnnxTTSEngine
     from utils import (
         compute_tts_checkpoint_key,
         export_normalized_text_file,
+        format_tts_timing_line,
         join_tts_audio_chunks,
         load_tts_checkpoint_chunks,
         normalize_full_document,
-        prepare_for_tts,
-        prepare_tts_text,
-        preprocess_ref_audio_text,
         preview_normalize_output,
-        save_tts_checkpoint_chunk,
         split_text_for_tts,
     )
 
@@ -184,7 +193,10 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
             ))
         return 0
 
-    _ensure_runtime()
+    use_pytorch_vocoder = bool(
+        getattr(args, "use_pytorch_vocoder", preset.use_pytorch_vocoder)
+    )
+    _ensure_runtime(use_pytorch_vocoder=use_pytorch_vocoder)
 
     voices = scan_ref_voices()
     ref_path, ref_text = _resolve_ref_from_preset(preset, voices)
@@ -196,15 +208,28 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
             preset.pipeline,
         )
 
+    workers = clamp_parallel_workers(
+        getattr(args, "parallel_workers", None) or preset.parallel_workers,
+        use_gpu=bool(getattr(args, "onnx_gpu", False) or preset.use_onnx_gpu),
+        use_pytorch_vocoder=use_pytorch_vocoder,
+    )
+    use_gpu = bool(getattr(args, "onnx_gpu", False) or preset.use_onnx_gpu)
     logger.info(
-        "CLI synthesize | profile=%s | gen_len=%d | mode=%s | int8=%s",
+        "CLI synthesize | profile=%s | gen_len=%d | mode=%s | quant=%s | workers=%d | gpu=%s | vocoder=%s",
         args.profile or DEFAULT_PROFILE,
         len(gen_text),
         tts_input_mode,
         preset.onnx_quant_mode,
+        workers,
+        use_gpu,
+        "pytorch" if use_pytorch_vocoder else "onnx",
     )
 
-    engine = OnnxTTSEngine.get(quant_mode=preset.onnx_quant_mode)
+    engine = OnnxTTSEngine.get(
+        quant_mode=preset.onnx_quant_mode,
+        use_gpu=use_gpu,
+        use_pytorch_vocoder=use_pytorch_vocoder,
+    )
     normalized_doc = normalize_full_document(
         gen_text, preset.pipeline, tts_input_mode
     )
@@ -251,44 +276,37 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
         for i in range(len(tts_chunks))
     ]
 
-    ref_audio = ""
-    resolved_ref_text = ""
-    for i, tts_chunk in enumerate(tts_chunks):
-        if i < resume_from and wave_parts[i].size > 0:
-            continue
-        print(f"[{i + 1}/{len(tts_chunks)}] synthesizing...", flush=True)
-
-        if i == 0:
-            ref_audio, resolved_ref_text = preprocess_ref_audio_text(
-                ref_path, ref_text, show_info=logger.info
-            )
-        else:
-            resolved_ref_text = ref_text.strip() or resolved_ref_text
-
-        prompt_normalized = prepare_tts_text(resolved_ref_text, preset.pipeline)
-        normalized = prepare_for_tts(
-            tts_chunk.text, preset.pipeline, tts_input_mode, already_normalized=True
-        )
-        if not normalized.strip():
-            wave_parts[i] = np.array([], dtype=np.float32)
-            continue
-
-        wav = engine.generate(
-            prompt_text=prompt_normalized,
-            prompt_wav=ref_audio,
-            text=normalized,
+    try:
+        synth_result = synthesize_tts_chunks(
+            engine=engine,
+            tts_chunks=tts_chunks,
+            wave_parts=wave_parts,
+            resume_from=resume_from,
+            norm_pipeline=preset.pipeline,
+            tts_input_mode=tts_input_mode,
+            ref_audio_path=ref_path,
+            ref_text=ref_text,
             speed=preset.speed,
             num_step=preset.num_step,
             guidance_scale=preset.guidance_scale,
             t_shift=preset.t_shift,
+            onnx_quant_mode=preset.onnx_quant_mode,
+            parallel_workers=workers,
+            use_onnx_gpu=use_gpu,
+            use_pytorch_vocoder=use_pytorch_vocoder,
+            manifest=manifest,
+            output_dir=OUTPUT_DIR,
         )
-        wave_parts[i] = wav
-        save_tts_checkpoint_chunk(
-            OUTPUT_DIR, i, wav, engine.sampling_rate, manifest
-        )
-        del wav
-        if is_force_cpu():
-            gc.collect()
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+
+    timing_line = format_tts_timing_line(
+        synth_result.elapsed_s,
+        len(tts_chunks),
+        preset.onnx_quant_mode,
+        chunks_synthesized=synth_result.chunks_synthesized,
+        parallel_workers=synth_result.effective_workers if synth_result.parallel_used else None,
+    )
 
     final_wave = join_tts_audio_chunks(wave_parts, tts_chunks, engine.sampling_rate)
     if final_wave is None or final_wave.size == 0:
@@ -310,6 +328,8 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
         saved = out_path
 
     print(f"Saved: {saved}")
+    print(timing_line)
+    logger.info("CLI synthesize done | file=%s | %s", saved, timing_line)
     if args.output_normalized:
         path = export_normalized_text_file(
             gen_text,
@@ -387,6 +407,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="skip_normalize",
         help="Alias for --skip-normalize",
+    )
+    synth_p.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Workers for parallel chunk synthesis (default: preset or 1). "
+            "GPU mode capped at 2. Disabled when resuming checkpoint."
+        ),
+    )
+    synth_p.add_argument(
+        "--gpu",
+        action="store_true",
+        dest="onnx_gpu",
+        help="Use ONNX Runtime CUDA/DirectML (requires onnxruntime-gpu)",
+    )
+    synth_p.add_argument(
+        "--pytorch-vocoder",
+        dest="use_pytorch_vocoder",
+        action="store_true",
+        default=True,
+        help="Use PyTorch Vocos vocoder (default, best quality)",
+    )
+    synth_p.add_argument(
+        "--onnx-vocoder",
+        dest="use_pytorch_vocoder",
+        action="store_false",
+        help="Use ONNX wetdog + librosa ISTFT (lower quality, no torch for vocoder)",
     )
 
     return parser

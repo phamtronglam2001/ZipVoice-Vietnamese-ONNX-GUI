@@ -2,17 +2,20 @@
 
 title ZipVoice ONNX TTS - GUI
 
-setlocal
+setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
+set INSTALL_MODE=cpu
+if exist ".install_mode" set /p INSTALL_MODE=<.install_mode
 
-
-set ZIPVOICE_FORCE_CPU=1
-
-set CUDA_VISIBLE_DEVICES=
-
-
+if /i "!INSTALL_MODE!"=="cpu" (
+    set ZIPVOICE_FORCE_CPU=1
+    set CUDA_VISIBLE_DEVICES=
+) else (
+    rem GPU install — allow CUDA; enable via GUI or ZIPVOICE_ONNX_GPU=1
+    if not defined ZIPVOICE_ONNX_GPU set ZIPVOICE_ONNX_GPU=0
+)
 
 if not exist ".venv\Scripts\python.exe" (
 

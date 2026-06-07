@@ -390,6 +390,35 @@ def join_tts_audio_chunks(
     return final
 
 
+def format_tts_timing_line(
+    elapsed_sec: float,
+    num_chunks: int,
+    quant_mode: str,
+    *,
+    chunks_synthesized: int | None = None,
+    parallel_workers: int | None = None,
+) -> str:
+    """One-line Vietnamese TTS benchmark summary for GUI status and logs."""
+    quant = str(quant_mode).strip().lower() or "?"
+    per_denom = (
+        chunks_synthesized
+        if chunks_synthesized is not None and chunks_synthesized > 0
+        else num_chunks
+    )
+    if per_denom <= 0:
+        per_denom = 1
+    per_chunk = elapsed_sec / per_denom
+    parts = [
+        f"Hoàn tất trong {elapsed_sec:.1f}s",
+        f"{num_chunks} chunk",
+        quant,
+        f"~{per_chunk:.1f}s/chunk",
+    ]
+    if parallel_workers is not None and parallel_workers > 1:
+        parts.insert(-1, f"{parallel_workers} worker")
+    return " | ".join(parts)
+
+
 def chunk_text(text: str, max_chars: int = 135) -> list[str]:
     """API cũ — trả list str (không metadata pause)."""
     return [c.text for c in split_text_for_tts(text, max_chars=max_chars)]

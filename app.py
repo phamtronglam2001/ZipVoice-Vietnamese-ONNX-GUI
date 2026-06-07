@@ -4,7 +4,6 @@ All model weights bundled under models/ (Git LFS); no Hugging Face download at s
 """
 from __future__ import annotations
 
-import gc
 import os
 import sys
 import traceback
@@ -15,12 +14,17 @@ import numpy as np
 from assets_loader import MANUAL_CHOICE, dropdown_choices, get_voice_by_id, scan_ref_voices
 from config import (
     ASSETS_DIR,
+    ONNX_DIR,
     OUTPUT_DIR,
     ROOT,
+    VOCODER_DIR,
     ensure_ffmpeg_on_path,
     is_force_cpu,
+    is_onnx_gpu_env,
     models_ready,
+    onnx_quant_mode as get_onnx_quant_mode,
     onnx_ready,
+    pytorch_vocoder_ready,
 )
 from export_audio import EXPORT_CHOICES, save_output
 from preset_io import (
@@ -42,9 +46,18 @@ if not models_ready():
     )
     if not onnx_ready():
         print("[ERROR] Missing ONNX files in models/onnx/")
+    if not pytorch_vocoder_ready():
+        print(
+            "[ERROR] Missing PyTorch Vocos weights in models/vocoder/\n"
+            "  Need config.yaml + pytorch_model.bin (charactr/vocos-mel-24khz).\n"
+            "  Run: python download_models.py --pytorch-vocoder\n"
+            "  Or copy from ZipVoice-Vietnamese-GUI repo."
+        )
     sys.exit(1)
 
+from chunk_synthesis import clamp_parallel_workers, max_parallel_workers, synthesize_tts_chunks  # noqa: E402
 from onnx_engine import OnnxTTSEngine  # noqa: E402
+from onnx_providers import provider_status_message  # noqa: E402
 from utils import (  # noqa: E402
     AUDIOBOOK_PRESET_PIPELINE,
     DEFAULT_NORMALIZE_PIPELINE,
@@ -58,6 +71,7 @@ from utils import (  # noqa: E402
     compute_tts_checkpoint_key,
     format_normalize_pipeline,
     format_normalize_pipeline_list,
+    format_tts_timing_line,
     join_tts_audio_chunks,
     load_tts_checkpoint_chunks,
     pipeline_add_step,
@@ -69,12 +83,8 @@ from utils import (  # noqa: E402
     export_normalized_text_file,
     parse_input_mode,
     normalize_full_document,
-    prepare_for_tts,
-    prepare_tts_text,
-    preprocess_ref_audio_text,
-    read_text_file,
     preview_normalize_output,
-    save_tts_checkpoint_chunk,
+    read_text_file,
     split_text_for_tts,
 )
 
@@ -259,6 +269,10 @@ def _on_load_preset(preset_name: str | None):
         updates["synth_guidance_scale"],
         updates["synth_t_shift"],
         updates["input_mode"],
+        updates.get("parallel_workers", gr.update(value=1)),
+        updates.get("use_onnx_gpu", gr.update(value=is_onnx_gpu_env())),
+        updates.get("use_pytorch_vocoder", gr.update(value=True)),
+        gr.update(visible=not preset.use_pytorch_vocoder),
         preset_status_msg,
     )
 
@@ -282,6 +296,9 @@ def _on_save_preset(
     synth_guidance_scale: float,
     synth_t_shift: float,
     input_mode: str,
+    parallel_workers: int,
+    use_onnx_gpu: bool,
+    use_pytorch_vocoder: bool,
 ):
     if not save_name or not save_name.strip():
         raise gr.Error("Nhập tên file preset (vd: sach_ai_vy).")
@@ -304,6 +321,9 @@ def _on_save_preset(
         t_shift=synth_t_shift,
         preset_name=save_name.strip(),
         input_mode=input_mode,
+        parallel_workers=parallel_workers,
+        use_onnx_gpu=use_onnx_gpu,
+        use_pytorch_vocoder=use_pytorch_vocoder,
     )
     try:
         path = save_preset(save_name.strip(), preset)
@@ -383,6 +403,12 @@ def _resolve_ref_path(ref_audio_path: str | None, asset_voice_id: str) -> str | 
     return None
 
 
+def _toggle_onnx_vocoder_warning(use_pytorch_vocoder: bool):
+    return gr.update(
+        visible=not use_pytorch_vocoder,
+    )
+
+
 def infer_tts(
     asset_voice_id: str,
     ref_audio_path: str | None,
@@ -403,6 +429,9 @@ def infer_tts(
     synth_t_shift: float,
     input_mode: str,
     gen_txt_source_path: str | None,
+    parallel_workers: int = 1,
+    use_onnx_gpu: bool = False,
+    use_pytorch_vocoder: bool = True,
     progress=gr.Progress(),
 ) -> tuple[str | None, tuple[int, np.ndarray] | None, str, str]:
     ref_audio_path = _resolve_ref_path(ref_audio_path, asset_voice_id)
@@ -441,8 +470,15 @@ def infer_tts(
                 norm_label,
             )
             norm_label = f"{INPUT_MODE_CHOICES['prepared']} (pipeline bỏ qua)"
+        use_gpu = bool(use_onnx_gpu) and not is_force_cpu()
+        use_pt_vocoder = bool(use_pytorch_vocoder)
+        workers = clamp_parallel_workers(
+            parallel_workers,
+            use_gpu=use_gpu,
+            use_pytorch_vocoder=use_pt_vocoder,
+        )
         logger.info(
-            "infer_tts | asset=%s | gen_len=%d | ref_len=%d | export=%s | norm=%s | mode=%s | chunk=%d | quant=%s",
+            "infer_tts | asset=%s | gen_len=%d | ref_len=%d | export=%s | norm=%s | mode=%s | chunk=%d | quant=%s | workers=%d | gpu=%s | vocoder=%s",
             asset_voice_id,
             len(gen_text),
             len(ref_text.strip()),
@@ -451,9 +487,38 @@ def infer_tts(
             tts_input_mode,
             chunk_max_chars,
             onnx_quant_mode,
+            workers,
+            use_gpu,
+            "pytorch" if use_pt_vocoder else "onnx",
         )
 
-        engine = OnnxTTSEngine.get(quant_mode=onnx_quant_mode)
+        if not onnx_ready(onnx_quant_mode):
+            from onnx_quant import missing_onnx_files, quant_readiness_hint
+
+            missing = missing_onnx_files(ONNX_DIR, onnx_quant_mode)
+            hint = quant_readiness_hint(onnx_quant_mode, missing)
+            raise gr.Error(
+                f"Chưa có ONNX cho mode **{onnx_quant_mode}**.\n"
+                f"Thiếu: `{', '.join(missing)}`\n\n{hint}"
+            )
+
+        if use_pt_vocoder and not pytorch_vocoder_ready():
+            raise gr.Error(
+                "Thiếu PyTorch Vocos weights trong `models/vocoder/`.\n"
+                "Cần `config.yaml` + `pytorch_model.bin` "
+                "([charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz)).\n"
+                "Chạy: `python download_models.py --pytorch-vocoder` "
+                "hoặc copy từ repo PyTorch ZipVoice-Vietnamese-GUI."
+            )
+
+        engine = OnnxTTSEngine.get(
+            quant_mode=onnx_quant_mode,
+            use_gpu=use_gpu,
+            use_pytorch_vocoder=use_pt_vocoder,
+        )
+        device_note = provider_status_message(use_gpu)
+        if use_onnx_gpu and not use_gpu:
+            logger.warning("GPU requested but disabled (ZIPVOICE_FORCE_CPU or no CUDA EP)")
         normalized_doc = normalize_full_document(
             gen_text, norm_pipeline, tts_input_mode
         )
@@ -500,67 +565,31 @@ def infer_tts(
             cached_chunks.get(i, np.array([], dtype=np.float32))
             for i in range(len(tts_chunks))
         ]
-        ref_audio = ""
-        resolved_ref_text = ""
-        normalized_preview = ""
-
-        for i, tts_chunk in enumerate(tts_chunks):
-            if i < resume_from and wave_parts[i].size > 0:
-                continue
-            progress(
-                (i + 1) / len(tts_chunks),
-                desc=f"Đang tổng hợp đoạn {i + 1}/{len(tts_chunks)} (ONNX)...",
-            )
-
-            if i == 0:
-                ref_audio, resolved_ref_text = preprocess_ref_audio_text(
-                    ref_audio_path,
-                    ref_text,
-                    show_info=logger.info,
-                )
-            else:
-                resolved_ref_text = ref_text.strip() or resolved_ref_text
-
-            prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
-            normalized = prepare_for_tts(
-                tts_chunk.text, norm_pipeline, tts_input_mode, already_normalized=True
-            )
-            if not normalized.strip():
-                logger.warning(
-                    "skip chunk %d/%d: empty after normalize",
-                    i + 1,
-                    len(tts_chunks),
-                )
-                wave_parts[i] = np.array([], dtype=np.float32)
-                continue
-            if not normalized_preview:
-                normalized_preview = normalized[:500] + (
-                    "…" if len(normalized) > 500 else ""
-                )
-
-            wav = engine.generate(
-                prompt_text=prompt_normalized,
-                prompt_wav=ref_audio,
-                text=normalized,
-                speed=speed,
+        try:
+            synth_result = synthesize_tts_chunks(
+                engine=engine,
+                tts_chunks=tts_chunks,
+                wave_parts=wave_parts,
+                resume_from=resume_from,
+                norm_pipeline=norm_pipeline,
+                tts_input_mode=tts_input_mode,
+                ref_audio_path=ref_audio_path,
+                ref_text=ref_text,
+                speed=float(speed),
                 num_step=int(synth_num_step),
                 guidance_scale=float(synth_guidance_scale),
                 t_shift=float(synth_t_shift),
+                onnx_quant_mode=onnx_quant_mode,
+                parallel_workers=workers,
+                use_onnx_gpu=use_gpu,
+                use_pytorch_vocoder=use_pt_vocoder,
+                manifest=manifest,
+                output_dir=OUTPUT_DIR,
+                progress=progress,
             )
-            if wav.size == 0:
-                logger.warning(
-                    "skip chunk %d/%d (%d chars): empty wav (0 mel frames)",
-                    i + 1,
-                    len(tts_chunks),
-                    len(normalized),
-                )
-            wave_parts[i] = wav
-            save_tts_checkpoint_chunk(
-                OUTPUT_DIR, i, wav, engine.sampling_rate, manifest
-            )
-            del wav
-            if is_force_cpu():
-                gc.collect()
+        except RuntimeError as exc:
+            raise gr.Error(str(exc)) from exc
+        normalized_preview = synth_result.normalized_preview
 
         final_wave = join_tts_audio_chunks(wave_parts, tts_chunks, engine.sampling_rate)
         if final_wave is None or final_wave.size == 0:
@@ -584,6 +613,27 @@ def infer_tts(
             if resume_from > 0
             else ""
         )
+        timing_line = format_tts_timing_line(
+            synth_result.elapsed_s,
+            len(tts_chunks),
+            onnx_quant_mode,
+            chunks_synthesized=synth_result.chunks_synthesized,
+            parallel_workers=(
+                synth_result.effective_workers if synth_result.parallel_used else None
+            ),
+        )
+        parallel_note = ""
+        if synth_result.parallel_used:
+            parallel_note = f" · **Song song:** {synth_result.effective_workers} workers"
+        elif workers > 1 and resume_from > 0:
+            parallel_note = " · **Song song:** tắt (resume checkpoint)"
+        elif use_pt_vocoder and parallel_workers > 1:
+            parallel_note = " · **Song song:** tắt (PyTorch vocoder)"
+        vocoder_note = (
+            "PyTorch Vocos (khuyên dùng)"
+            if use_pt_vocoder
+            else "ONNX wetdog + librosa ISTFT"
+        )
         norm_full_preview = preview_normalize_output(
             gen_text,
             norm_pipeline,
@@ -592,12 +642,13 @@ def infer_tts(
         )
         status = (
             f"Đã lưu: `{saved}`\n\n"
-            f"**ONNX:** {onnx_mode} · **Chuẩn hóa:** {norm_label} · "
+            f"**ONNX:** {onnx_mode} · **Vocoder:** {vocoder_note} · **Thiết bị:** {device_note} · **Chuẩn hóa:** {norm_label} · "
             f"**Chunks:** {len(tts_chunks)} (max {chunk_max_chars} ký tự/chunk, "
-            f"~{est_min} phút CPU ước tính){resume_note}\n\n"
+            f"~{est_min} phút ước tính){resume_note}{parallel_note}\n\n"
+            f"**Thời gian:** {timing_line}\n\n"
             f"**Text sau chuẩn hóa (đoạn 1):** {normalized_preview or '(trống)'}"
         )
-        logger.info("infer_tts done | file=%s", saved)
+        logger.info("infer_tts done | file=%s | %s", saved, timing_line)
         return str(saved), (engine.sampling_rate, final_wave), status, norm_full_preview
 
     except gr.Error:
@@ -624,10 +675,16 @@ def build_ui() -> gr.Blocks:
             """
 # ZipVoice Vietnamese ONNX TTS
 
-Inference qua **ONNX Runtime** (ZipVoice + Vocos ONNX, không PyTorch).
+Inference qua **ONNX Runtime** (ZipVoice) + **Vocos PyTorch** (mặc định, chất lượng tốt nhất).
 Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             """
         )
+        if not pytorch_vocoder_ready():
+            gr.Markdown(
+                f"⚠️ **Thiếu PyTorch Vocos weights** trong `{VOCODER_DIR}` — "
+                "cần `config.yaml` + `pytorch_model.bin`. "
+                "Chạy `python download_models.py --pytorch-vocoder` hoặc copy từ repo PyTorch."
+            )
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -707,11 +764,12 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             )
             from onnx_quant import QUANT_MODE_CHOICES
 
+            _default_quant = get_onnx_quant_mode()
             onnx_quant_mode = gr.Dropdown(
                 label="ONNX quant mode",
                 choices=list(QUANT_MODE_CHOICES),
-                value="int8",
-                info="Khớp với file trong models/onnx/ (xem quantization.json)",
+                value=_default_quant,
+                info="Tự khớp quantization.json hoặc auto-detect int4/int8/fp32 từ models/onnx/",
             )
 
         _norm_add_choices = [(label, key) for key, label in NORMALIZE_ADD_CHOICES.items()]
@@ -790,6 +848,50 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                     label="Nghỉ cắt phẩy (s)",
                 )
 
+        _max_cpu_workers = max_parallel_workers(use_gpu=False)
+        _default_gpu = is_onnx_gpu_env()
+        with gr.Accordion("Hiệu năng", open=False):
+            use_pytorch_vocoder = gr.Checkbox(
+                label="Dùng Vocos PyTorch (khuyên dùng)",
+                value=True,
+                info=(
+                    "Chất lượng tốt nhất. Weights: models/vocoder/config.yaml + "
+                    "pytorch_model.bin (charactr/vocos-mel-24khz)."
+                ),
+            )
+            onnx_vocoder_warning = gr.Markdown(
+                value=(
+                    "⚠️ **Vocoder ONNX + librosa ISTFT** có thể kém chất lượng hơn PyTorch Vocos, "
+                    "đặc biệt với **INT4**. Chỉ dùng khi cần inference thuần ONNX (không torch)."
+                ),
+                visible=False,
+            )
+            use_onnx_gpu = gr.Checkbox(
+                label="Dùng GPU (CUDA / DirectML)",
+                value=_default_gpu,
+                info=(
+                    "Cần cài onnxruntime-gpu (NVIDIA CUDA) hoặc ORT có DirectML. "
+                    "Env: ZIPVOICE_ONNX_GPU=1. INT4 có thể chạy CPU fallback."
+                ),
+            )
+            parallel_workers = gr.Slider(
+                1,
+                _max_cpu_workers,
+                value=1,
+                step=1,
+                label="Số luồng chunk song song (workers)",
+                info=(
+                    f"Mặc định 1 (tuần tự). CPU tối đa {_max_cpu_workers}; "
+                    "GPU tối đa 2 (mỗi worker load ONNX riêng — tốn VRAM). "
+                    "PyTorch vocoder → luôn tuần tự. Resume checkpoint → tự về 1."
+                ),
+            )
+        use_pytorch_vocoder.change(
+            _toggle_onnx_vocoder_warning,
+            inputs=[use_pytorch_vocoder],
+            outputs=[onnx_vocoder_warning],
+        )
+
         with gr.Row():
             preview_norm_btn = gr.Button(
                 "Xem trước chuẩn hóa (ô 3)",
@@ -825,6 +927,8 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
 
         gr.Markdown(
             """
+**ONNX quant:** INT4 cần `text_encoder_int4.onnx` + `fm_decoder_int4.onnx` — export từ PyTorch GUI hoặc `quantize_onnx.py --mode int4`.
+
 **Mẹo soạn manuscript (audiobook)**
 
 - Xuống dòng = đoạn mới; dòng `Chương 1` / `Lời nói đầu` / `Phụ lục` → nghỉ chương dài hơn.
@@ -894,6 +998,9 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 synth_guidance_scale,
                 synth_t_shift,
                 input_mode,
+                parallel_workers,
+                use_onnx_gpu,
+                use_pytorch_vocoder,
             ],
             outputs=[preset_dropdown, preset_status],
         )
@@ -921,6 +1028,10 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 synth_guidance_scale,
                 synth_t_shift,
                 input_mode,
+                parallel_workers,
+                use_onnx_gpu,
+                use_pytorch_vocoder,
+                onnx_vocoder_warning,
                 preset_status,
             ],
         )
@@ -945,6 +1056,9 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 synth_guidance_scale,
                 synth_t_shift,
                 input_mode,
+                parallel_workers,
+                use_onnx_gpu,
+                use_pytorch_vocoder,
             ],
             outputs=[preset_dropdown, preset_status],
         )
@@ -993,6 +1107,9 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 synth_t_shift,
                 input_mode,
                 gen_txt_source_path,
+                parallel_workers,
+                use_onnx_gpu,
+                use_pytorch_vocoder,
             ],
             outputs=[output_file, output_audio, save_status, norm_preview],
             concurrency_limit=1,
@@ -1009,7 +1126,13 @@ if __name__ == "__main__":
     port = int(os.environ.get("GRADIO_SERVER_PORT", "7862"))
     share = os.environ.get("GRADIO_SHARE", "0") == "1"
 
-    logger.info("Starting Gradio ONNX on http://%s:%s (cpu=%s)", host, port, is_force_cpu())
+    logger.info(
+        "Starting Gradio ONNX on http://%s:%s (force_cpu=%s, onnx_gpu_env=%s)",
+        host,
+        port,
+        is_force_cpu(),
+        is_onnx_gpu_env(),
+    )
     demo = build_ui()
     demo.queue(default_concurrency_limit=1).launch(
         server_name=host,

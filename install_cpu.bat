@@ -22,13 +22,15 @@ echo   ZipVoice Vietnamese ONNX TTS - Install (uv)
 
 echo  ============================================================
 
-echo   ZipVoice model     = ONNX Runtime (no PyTorch)
+echo   ZipVoice model     = ONNX Runtime
 
-echo   Vocos vocoder      = ONNX wetdog + librosa ISTFT
+echo   Vocos vocoder      = PyTorch Vocos (default, khuyen dung)
+
+echo   Vocoder ONNX       = optional fallback (wetdog + librosa ISTFT)
 
 echo   Model weights      = bundled in models/ (Git LFS)
 
-echo   Download           = none (offline after clone)
+echo   PyTorch vocoder DL = python download_models.py --pytorch-vocoder
 
 echo  ============================================================
 
@@ -86,11 +88,23 @@ if not exist "%PY%" (
 
 
 
-echo [2/4] Runtime (onnxruntime, gradio, librosa, scipy...)...
+echo [2/4] Runtime (onnxruntime, gradio, torch/vocos, librosa...)...
 
-uv pip install --python "%PY%" -r requirements-cpu.txt
+set /p USE_GPU="Co GPU NVIDIA CUDA? (y/N): "
 
-if errorlevel 1 goto :fail
+if /i "!USE_GPU!"=="y" (
+    echo Installing onnxruntime-gpu ^(CUDA^)...
+    uv pip install --python "%PY%" gradio scipy soundfile pydub "numpy>=1.24.0,<=1.26.4" librosa
+    if errorlevel 1 goto :fail
+    uv pip uninstall --python "%PY%" onnxruntime 2>nul
+    uv pip install --python "%PY%" -r requirements-gpu.txt
+    if errorlevel 1 goto :fail
+    set INSTALL_MODE=gpu
+) else (
+    uv pip install --python "%PY%" -r requirements-cpu.txt
+    if errorlevel 1 goto :fail
+    set INSTALL_MODE=cpu
+)
 
 
 
@@ -114,13 +128,15 @@ echo.
 
 echo Verifying bundled model weights...
 
-"%PY%" -c "from config import models_ready; import sys; sys.exit(0 if models_ready() else 1)"
+"%PY%" -c "from config import models_ready, pytorch_vocoder_ready; import sys; sys.exit(0 if models_ready() else 1)"
 
 if errorlevel 1 (
 
     echo [WARN] Some model files missing. Try: git lfs pull
 
-    echo        Or run: python download_models.py  ^(vocoder fallback only^)
+    echo        PyTorch vocoder: python download_models.py --pytorch-vocoder
+
+    echo        ONNX vocoder fallback: python download_models.py --onnx-vocoder
 
     goto :fail
 
@@ -128,20 +144,23 @@ if errorlevel 1 (
 
 
 
-echo cpu>"%CD%\.install_mode"
+echo !INSTALL_MODE!>"%CD%\.install_mode"
 
 
 
-"%PY%" -c "import onnxruntime; import onnx_engine; print('OK | onnxruntime', onnxruntime.__version__, '| vocoder=onnx+librosa (no torch)')"
+"%PY%" -c "import onnxruntime; import onnx_engine; print('OK | onnxruntime', onnxruntime.__version__, '| vocoder=PyTorch Vocos (default)')"
 
 
 
 echo.
 
 echo  === Install complete ===
-
 echo  Chay GUI: run_gui.bat  -^>  http://127.0.0.1:7862
-
+if /i "!INSTALL_MODE!"=="gpu" (
+    echo  GPU: bat dau GUI, bat "Dung GPU" hoac set ZIPVOICE_ONNX_GPU=1
+) else (
+    echo  CPU-only. GPU: chay install_gpu.bat hoac install_cpu.bat ^(Y^) hoac pip install onnxruntime-gpu
+)
 echo  (run_cpu.bat = alias cu, tuong duong run_gui.bat)
 
 echo.

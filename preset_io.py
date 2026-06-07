@@ -63,6 +63,9 @@ class PresetConfig:
     t_shift: float = 0.5
     export_format: str = "WAV 24kHz"
     input_mode: str = "raw"  # "raw" | "prepared"
+    parallel_workers: int = 1
+    use_onnx_gpu: bool = False
+    use_pytorch_vocoder: bool = True
 
 
 def _slug_name(name: str) -> str:
@@ -127,6 +130,16 @@ def validate_preset(data: dict[str, Any]) -> list[str]:
             errors.append(f"synthesis.{key} must be a number")
     if "num_step" in synth and not isinstance(synth["num_step"], int):
         errors.append("synthesis.num_step must be an integer")
+    pw = synth.get("parallel_workers")
+    if pw is not None:
+        if not isinstance(pw, int) or pw < 1:
+            errors.append("synthesis.parallel_workers must be an integer >= 1")
+    gpu = synth.get("use_onnx_gpu")
+    if gpu is not None and not isinstance(gpu, bool):
+        errors.append("synthesis.use_onnx_gpu must be a boolean")
+    pt_vocoder = synth.get("use_pytorch_vocoder")
+    if pt_vocoder is not None and not isinstance(pt_vocoder, bool):
+        errors.append("synthesis.use_pytorch_vocoder must be a boolean")
 
     export = data.get("export") or {}
     fmt = export.get("format")
@@ -200,6 +213,9 @@ def _preset_from_dict(data: dict[str, Any]) -> PresetConfig:
         t_shift=float(synth.get("t_shift", 0.5)),
         export_format=str(export.get("format", "WAV 24kHz")),
         input_mode=str(data.get("input_mode", "raw")),
+        parallel_workers=int(synth.get("parallel_workers", 1)),
+        use_onnx_gpu=bool(synth.get("use_onnx_gpu", False)),
+        use_pytorch_vocoder=bool(synth.get("use_pytorch_vocoder", True)),
     )
 
 
@@ -237,6 +253,9 @@ def preset_to_dict(preset: PresetConfig) -> dict[str, Any]:
             "speed": preset.speed,
             "guidance_scale": preset.guidance_scale,
             "t_shift": preset.t_shift,
+            "parallel_workers": int(preset.parallel_workers),
+            "use_onnx_gpu": bool(preset.use_onnx_gpu),
+            "use_pytorch_vocoder": bool(preset.use_pytorch_vocoder),
         },
         "export": {"format": preset.export_format},
         "input_mode": preset.input_mode,
@@ -306,6 +325,9 @@ def preset_from_gui_state(
     preset_name: str = "",
     description: str = "",
     input_mode: str = "raw",
+    parallel_workers: int = 1,
+    use_onnx_gpu: bool = False,
+    use_pytorch_vocoder: bool = True,
 ) -> PresetConfig:
     """Alias for collect_gui_state."""
     return collect_gui_state(
@@ -328,6 +350,9 @@ def preset_from_gui_state(
         preset_name=preset_name,
         description=description,
         input_mode=input_mode,
+        parallel_workers=parallel_workers,
+        use_onnx_gpu=use_onnx_gpu,
+        use_pytorch_vocoder=use_pytorch_vocoder,
     )
 
 
@@ -352,6 +377,9 @@ def collect_gui_state(
     preset_name: str = "",
     description: str = "",
     input_mode: str = "raw",
+    parallel_workers: int = 1,
+    use_onnx_gpu: bool = False,
+    use_pytorch_vocoder: bool = True,
 ) -> PresetConfig:
     pipeline = build_normalize_pipeline(norm_pipeline)
     is_manual = not voice_dropdown or voice_dropdown == MANUAL_CHOICE
@@ -379,6 +407,9 @@ def collect_gui_state(
             t_shift=float(t_shift),
             export_format=export_format,
             input_mode=mode,
+            parallel_workers=int(parallel_workers),
+            use_onnx_gpu=bool(use_onnx_gpu),
+            use_pytorch_vocoder=bool(use_pytorch_vocoder),
         )
 
     return PresetConfig(
@@ -402,6 +433,9 @@ def collect_gui_state(
         t_shift=float(t_shift),
         export_format=export_format,
         input_mode=mode,
+        parallel_workers=int(parallel_workers),
+        use_onnx_gpu=bool(use_onnx_gpu),
+        use_pytorch_vocoder=bool(use_pytorch_vocoder),
     )
 
 
@@ -449,6 +483,9 @@ def apply_preset_to_gui(preset: PresetConfig) -> dict[str, Any]:
         "synth_guidance_scale": float(preset.guidance_scale),
         "synth_t_shift": float(preset.t_shift),
         "input_mode": gr.update(value=preset.input_mode),
+        "parallel_workers": gr.update(value=int(preset.parallel_workers)),
+        "use_onnx_gpu": gr.update(value=bool(preset.use_onnx_gpu)),
+        "use_pytorch_vocoder": gr.update(value=bool(preset.use_pytorch_vocoder)),
         "preset_status": (
             f"Đã tải preset **{preset.name}**"
             + (f" — {preset.description}" if preset.description else "")
