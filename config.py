@@ -1,7 +1,7 @@
 """
 Portable path configuration for ZipVoice Vietnamese ONNX TTS.
-ONNX weights are bundled in models/onnx/; vocoder + ZipVoice tokenizer
-runtime are fetched once by setup (no full PyTorch checkpoint).
+All inference weights are bundled under models/ (Git LFS) — no runtime HF download.
+See models/THIRD_PARTY_LICENSES.md for license terms.
 """
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ VOCODER_DIR = MODELS_DIR / "vocoder"
 ONNX_MODEL_JSON = ONNX_DIR / "model.json"
 ONNX_TOKENS = ONNX_DIR / "tokens.txt"
 
-HF_VOCODER_REPO = "charactr/vocos-mel-24khz"
+HF_VOCODER_REPO = "wetdog/vocos-mel-24khz-onnx"  # attribution only; bundled in repo
+VOCODER_ONNX = VOCODER_DIR / "mel_spec_24khz.onnx"
+VOCODER_ONNX_FILENAME = "mel_spec_24khz.onnx"
 
 
 def ensure_ffmpeg_on_path() -> None:
@@ -75,9 +77,7 @@ def onnx_ready(use_int8: bool | None = None) -> bool:
 
 
 def vocoder_ready() -> bool:
-    return (VOCODER_DIR / "config.yaml").is_file() and (
-        VOCODER_DIR / "pytorch_model.bin"
-    ).is_file()
+    return VOCODER_ONNX.is_file()
 
 
 def models_ready(use_int8: bool | None = None) -> bool:

@@ -14,7 +14,7 @@ _VI_NUM_WORDS = (
     "hai mươi|ba mươi|bốn mươi|năm mươi"
 )
 
-_RE_DIGIT_PERIOD = re.compile(r"(\d{1,4})\.\s+")
+_RE_DIGIT_PERIOD = re.compile(r"(\d{1,4})\.(?!\d)\s+")
 _RE_WORD_PERIOD = re.compile(
     rf"\b({_VI_NUM_WORDS})\s*\.\s+",
     re.IGNORECASE | re.UNICODE,

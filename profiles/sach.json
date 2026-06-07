@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "Sách — Ái Vy",
+  "description": "Audiobook: VieNeu + cấu trúc TTS + vinorm, giọng Ái Vy",
+  "voice": {
+    "mode": "bundled",
+    "voice_id": "ai_vy"
+  },
+  "voice_manual": {
+    "mode": "manual",
+    "ref_wav": "",
+    "ref_text": ""
+  },
+  "pipeline": ["vieneu", "period_break", "vinorm"],
+  "chunk_max_chars": 135,
+  "pause": {
+    "sentence": 0.35,
+    "paragraph": 0.65,
+    "chapter": 2.0,
+    "enum_item": 1.0,
+    "forced_split": 0.28
+  },
+  "synthesis": {
+    "use_int8": true,
+    "num_step": 16,
+    "speed": 1.0,
+    "guidance_scale": 1.0,
+    "t_shift": 0.5
+  },
+  "export": {
+    "format": "WAV 24kHz"
+  }
+}

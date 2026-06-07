@@ -4,7 +4,9 @@ __pycache__/
 *.pyo
 ffmpeg/
 vendor/
-models/vocoder/
+models/vocoder/*
+!models/vocoder/mel_spec_24khz.onnx
+models/vocoder/.cache/
 output/*
 !output/.gitkeep
 *.png

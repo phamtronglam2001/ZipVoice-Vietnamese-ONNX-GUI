@@ -1,0 +1,4 @@
+# Optional — pipeline NSW (skip if you only use VieNeu + Cấu trúc TTS)
+vinorm
+vietnormalizer
+sea-g2p>=0.7.5

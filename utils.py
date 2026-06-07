@@ -4,19 +4,28 @@ Transcript giọng mẫu bắt buộc nhập thủ công — không auto ASR.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Literal
+
+NormalizeInputMode = Literal["raw", "prepared"]
+
+INPUT_MODE_CHOICES: dict[str, str] = {
+    "raw": "Văn bản gốc",
+    "prepared": "Đã chuẩn hóa (bỏ qua pipeline)",
+}
 
 import numpy as np
 from pydub import AudioSegment, silence
 from scipy.io import wavfile
 from scipy.signal import resample_poly
 
-from config import apply_cpu_env, ensure_ffmpeg_on_path, set_offline_env
+from config import OUTPUT_DIR, apply_cpu_env, ensure_ffmpeg_on_path, set_offline_env
 
 ensure_ffmpeg_on_path()
 apply_cpu_env()
@@ -38,24 +47,55 @@ def resample_to_24khz(input_path: str, output_path: str) -> None:
 
 # ─── Long-text chunking (paragraph → sentence → clause, inspired by VieNeu-TTS) ───
 
+PAUSE_SENTENCE_DEFAULT = 0.35
+PAUSE_PARAGRAPH_DEFAULT = 0.65
+PAUSE_CHAPTER_DEFAULT = 2.0
+PAUSE_ENUM_DEFAULT = 1.0
+PAUSE_FORCED_SPLIT_DEFAULT = 0.28
+CROSSFADE_FORCED_SPLIT_S = 0.040
+
 RE_NEWLINE = re.compile(r"[\r\n]+")
 RE_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 RE_MINOR_PUNCT = re.compile(r"(?<=[,;:\-–—])\s+")
 RE_CHAPTER_HEADING = re.compile(
-    r"^(?:chương|phần|mục|chapter|part)\s+[\dIVXLCivxlc]+",
+    r"^(?:"
+    r"(?:chương|phần|mục|chapter|part)\s+[\dIVXLCivxlc]+"
+    r"|chương\s+thứ\s+"
+    r"(?:nhất|một|hai|ba|tư|năm|sáu|bảy|tám|chín|mười(?:\s+một|\s+hai)?)"
+    r"|lời\s+nói\s+đầu"
+    r"|phụ\s+lục"
+    r")",
     re.IGNORECASE,
 )
 RE_MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+")
 RE_HR_LINE = re.compile(r"^[\-*_]{3,}\s*$")
 
+# Chunks shorter than this are merged into the previous chunk to avoid 0-frame mel.
+MIN_TTS_CHUNK_CHARS = 3
+
+_PLACEHOLDER_PREFIX = "\x00VNPROT"
+_SENTENCE_PROTECTED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\d+\.\d+"), "DEC"),
+    (re.compile(r"(?:PGS\.TS|PGS|TS|tp|Tp|Dr|Mr|Mrs)\.", re.IGNORECASE), "ABBR"),
+    (re.compile(r"v\.v(?:\.|…)"), "VV"),
+    (re.compile(r"(?<![\n\r])(?:số|Số)\s+\d+(?:[.,]\d+)?"), "SO"),
+    (
+        re.compile(
+            r"(?i)\bchương\s+(?:thứ\s+)?(?:nhất|một|hai|ba|tư|năm|sáu|bảy|tám|chín|mười)",
+        ),
+        "CH",
+    ),
+]
+
 
 @dataclass
 class TtsChunk:
     text: str
-    pause_after: float = 0.35
+    pause_after: float = PAUSE_SENTENCE_DEFAULT
     is_sentence_end: bool = True
     is_paragraph_end: bool = False
     is_chapter_break: bool = False
+    is_forced_split: bool = False
 
 
 def _is_chapter_heading(line: str) -> bool:
@@ -67,6 +107,34 @@ def _is_chapter_heading(line: str) -> bool:
         or RE_MARKDOWN_HEADING.match(s)
         or RE_HR_LINE.match(s)
     )
+
+
+def split_sentences_vn(text: str) -> list[str]:
+    """Tách câu tiếng Việt — bảo vệ số thập phân, viết tắt, v.v."""
+    if not text or not text.strip():
+        return []
+
+    placeholders: dict[str, str] = {}
+    protected = text
+
+    def _make_placeholder(match: re.Match[str]) -> str:
+        key = f"{_PLACEHOLDER_PREFIX}{len(placeholders)}__"
+        placeholders[key] = match.group(0)
+        return key
+
+    for pattern, _kind in _SENTENCE_PROTECTED_PATTERNS:
+        protected = pattern.sub(_make_placeholder, protected)
+
+    raw_parts = RE_SENTENCE_END.split(protected)
+    sentences: list[str] = []
+    for part in raw_parts:
+        restored = part
+        for key, original in placeholders.items():
+            restored = restored.replace(key, original)
+        restored = restored.strip()
+        if restored:
+            sentences.append(restored)
+    return sentences if sentences else [text.strip()]
 
 
 def _split_long_sentence(sentence: str, max_chars: int) -> list[tuple[str, bool]]:
@@ -109,14 +177,55 @@ def _split_long_sentence(sentence: str, max_chars: int) -> list[tuple[str, bool]
     return parts
 
 
+def _should_not_merge_into(prev: TtsChunk) -> bool:
+    """Không gộp chunk nhỏ vào điểm nghỉ cấu trúc (đoạn/chương/enum)."""
+    return (
+        prev.pause_after >= 1.0
+        or prev.is_paragraph_end
+        or prev.is_chapter_break
+    )
+
+
+def _merge_tiny_chunks(
+    chunks: list[TtsChunk],
+    min_chars: int = MIN_TTS_CHUNK_CHARS,
+) -> list[TtsChunk]:
+    """Gộp chunk quá ngắn vào chunk trước — tránh mel T=0 sau ODE trim."""
+    if min_chars <= 1 or len(chunks) <= 1:
+        return chunks
+    merged: list[TtsChunk] = []
+    for ch in chunks:
+        text = ch.text.strip()
+        if not text:
+            continue
+        if (
+            merged
+            and len(text) < min_chars
+            and not _should_not_merge_into(merged[-1])
+        ):
+            prev = merged[-1]
+            merged[-1] = TtsChunk(
+                text=f"{prev.text} {ch.text}".strip(),
+                pause_after=ch.pause_after,
+                is_sentence_end=ch.is_sentence_end,
+                is_paragraph_end=ch.is_paragraph_end,
+                is_chapter_break=ch.is_chapter_break,
+                is_forced_split=prev.is_forced_split,
+            )
+            logger.debug("merged tiny chunk (%d chars) into previous", len(text))
+        else:
+            merged.append(ch)
+    return merged
+
+
 def split_text_for_tts(
     text: str,
     max_chars: int = 135,
-    pause_sentence: float = 0.35,
-    pause_paragraph: float = 0.65,
-    pause_chapter: float = 1.2,
-    pause_enum_item: float = 1.0,
-    pause_forced_split: float = 0.12,
+    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
+    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
+    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
+    pause_enum_item: float = PAUSE_ENUM_DEFAULT,
+    pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT,
 ) -> list[TtsChunk]:
     """
     Chia văn bản dài cho ZipVoice:
@@ -151,7 +260,7 @@ def split_text_for_tts(
     total_blocks = len(merged_blocks)
 
     for bi, (block, is_chapter_block) in enumerate(merged_blocks):
-        sentences = RE_SENTENCE_END.split(block)
+        sentences = split_sentences_vn(block)
         buffer = ""
         block_chunks: list[TtsChunk] = []
 
@@ -167,11 +276,13 @@ def split_text_for_tts(
                     )
                     buffer = ""
                 for frag, sent_end in _split_long_sentence(sentence, max_chars):
+                    forced = not sent_end
                     block_chunks.append(
                         TtsChunk(
                             text=frag,
                             is_sentence_end=sent_end,
-                            pause_after=pause_forced_split if not sent_end else pause_sentence,
+                            pause_after=pause_forced_split if forced else pause_sentence,
+                            is_forced_split=forced,
                         )
                     )
             elif buffer and len(buffer) + 1 + len(sentence) > max_chars:
@@ -213,7 +324,19 @@ def split_text_for_tts(
         return [TtsChunk(text=text.strip(), pause_after=0.0)]
 
     chunks[-1].pause_after = 0.0
-    return chunks
+    return _merge_tiny_chunks(chunks)
+
+
+def _linear_crossfade(
+    a: np.ndarray, b: np.ndarray, fade_samples: int
+) -> np.ndarray:
+    if fade_samples <= 0 or a.size == 0 or b.size == 0:
+        return np.concatenate([a, b])
+    fade_samples = min(fade_samples, a.size, b.size)
+    fade_out = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+    fade_in = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+    blended = a[-fade_samples:] * fade_out + b[:fade_samples] * fade_in
+    return np.concatenate([a[:-fade_samples], blended, b[fade_samples:]])
 
 
 def join_tts_audio_chunks(
@@ -223,19 +346,47 @@ def join_tts_audio_chunks(
 ) -> np.ndarray:
     if not wave_chunks:
         return np.array([], dtype=np.float32)
-    if len(wave_chunks) == 1:
-        return wave_chunks[0]
 
-    final = wave_chunks[0]
-    for i in range(1, len(wave_chunks)):
+    normalized = [
+        w.astype(np.float32)
+        if w is not None and getattr(w, "size", 0) > 0
+        else np.array([], dtype=np.float32)
+        for w in wave_chunks
+    ]
+    if len(normalized) == 1:
+        return normalized[0]
+
+    final = normalized[0]
+    for i in range(1, len(normalized)):
         pause_s = 0.0
+        prev_meta: TtsChunk | None = None
         if i - 1 < len(tts_chunks):
-            pause_s = tts_chunks[i - 1].pause_after
-        gap = int(sample_rate * max(0.0, pause_s))
-        if gap > 0:
-            final = np.concatenate([final, np.zeros(gap, dtype=final.dtype), wave_chunks[i]])
+            prev_meta = tts_chunks[i - 1]
+            pause_s = prev_meta.pause_after
+        segment = normalized[i]
+
+        if (
+            prev_meta
+            and prev_meta.is_forced_split
+            and final.size > 0
+            and segment.size > 0
+        ):
+            fade_n = int(sample_rate * CROSSFADE_FORCED_SPLIT_S)
+            final = _linear_crossfade(final, segment, fade_n)
+            remaining = max(0.0, pause_s - CROSSFADE_FORCED_SPLIT_S)
+            if remaining > 0:
+                gap = int(sample_rate * remaining)
+                final = np.concatenate(
+                    [final, np.zeros(gap, dtype=np.float32)]
+                )
         else:
-            final = np.concatenate([final, wave_chunks[i]])
+            gap = int(sample_rate * max(0.0, pause_s))
+            if gap > 0:
+                final = np.concatenate(
+                    [final, np.zeros(gap, dtype=np.float32), segment]
+                )
+            else:
+                final = np.concatenate([final, segment])
     return final
 
 
@@ -353,7 +504,7 @@ def preprocess_ref_audio_text(
     return ref_audio, ref_text
 
 
-def post_process_text(text: str) -> str:
+def post_process_text(text: str, *, apply_lower: bool = True) -> str:
     text = " " + text + " "
     for bad, good in [
         (" . . ", " . "),
@@ -363,7 +514,79 @@ def post_process_text(text: str) -> str:
     ]:
         text = text.replace(bad, good)
     text = text.replace('"', "")
-    return " ".join(text.split())
+    cleaned = " ".join(text.split())
+    return cleaned.lower() if apply_lower else cleaned
+
+
+def parse_input_mode(mode: str | bool | None) -> NormalizeInputMode:
+    if mode is True:
+        return "prepared"
+    key = (str(mode or "raw")).strip().lower()
+    if key in ("prepared", "skip", "skip_normalize", "input_prepared"):
+        return "prepared"
+    return "raw"
+
+
+def prepare_tts_text_passthrough(text: str) -> str:
+    """Prepared input: strip + light punctuation cleanup, no lowercase."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    return post_process_text(text, apply_lower=False)
+
+
+def prepare_for_tts(
+    text: str,
+    pipeline: list[str] | str | None = None,
+    mode: NormalizeInputMode = "raw",
+) -> str:
+    if parse_input_mode(mode) == "prepared":
+        return prepare_tts_text_passthrough(text)
+    return prepare_tts_text(text, pipeline or [])
+
+
+def normalize_full_document(
+    text: str,
+    pipeline: list[str] | str | None,
+    mode: NormalizeInputMode = "raw",
+) -> str:
+    """Full-document normalize for export / preview textbox."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if parse_input_mode(mode) == "prepared":
+        return prepare_tts_text_passthrough(raw)
+    steps = build_normalize_pipeline(pipeline)
+    normalized = normalize_text_pipeline(raw, steps) if steps else raw
+    return post_process_text(normalized, apply_lower=True)
+
+
+def default_normalized_export_path(
+    source_hint: str = "text",
+    output_dir: Path | None = None,
+) -> Path:
+    out = output_dir or OUTPUT_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    stem = Path(source_hint).stem if source_hint else "text"
+    stem = re.sub(r"[^\w\-.]+", "_", stem, flags=re.UNICODE).strip("._") or "text"
+    return out / f"{stem}_normalized.txt"
+
+
+def export_normalized_text_file(
+    text: str,
+    pipeline: list[str] | str | None,
+    mode: NormalizeInputMode = "raw",
+    output_path: str | Path | None = None,
+    source_hint: str = "text",
+) -> Path:
+    full = normalize_full_document(text, pipeline, mode)
+    if not full:
+        raise ValueError("Không có văn bản để xuất sau chuẩn hóa.")
+    path = Path(output_path) if output_path else default_normalized_export_path(source_hint)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(full, encoding="utf-8")
+    logger.info("exported normalized text | path=%s | chars=%d | mode=%s", path, len(full), mode)
+    return path.resolve()
 
 
 NORMALIZE_BACKENDS: dict[str, str] = {
@@ -384,6 +607,15 @@ NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
     "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
 }
+
+# Backends available in "Chọn loại chuẩn hóa" (excludes "none")
+NORMALIZE_ADD_CHOICES: dict[str, str] = {
+    k: v for k, v in NORMALIZE_STEP_CHOICES.items() if k != "none"
+}
+
+DEFAULT_NORMALIZE_PIPELINE: list[str] = []
+AUDIOBOOK_PRESET_PIPELINE: list[str] = ["vieneu", "period_break", "vinorm"]
+CHECKPOINT_SUBDIR = "latest"
 
 _sea_g2p_normalizer = None
 _vietnamese_normalizer = None
@@ -466,23 +698,36 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
         return text
 
 
-def build_normalize_pipeline(step1: str, step2: str, step3: str) -> list[str]:
+def build_normalize_pipeline(steps: list[str] | str | None) -> list[str]:
     """
-    Ghép tối đa 3 bước chuẩn hóa theo thứ tự.
-    Mỗi thư viện chỉ dùng Normalizer (đầu ra là text), không G2P — có thể xếp chuỗi.
+    Validate ordered normalizer keys (any length).
+    Each backend outputs text only (no G2P) — steps can be chained.
+    Duplicate keys are skipped with a warning.
     """
+    if steps is None:
+        return []
+    if isinstance(steps, str):
+        key = (steps or "none").strip().lower()
+        if key in ("none", "off", "không", ""):
+            return []
+        if key not in NORMALIZE_BACKENDS or key == "none":
+            raise ValueError(f"Backend chuẩn hóa không hợp lệ: {steps!r}")
+        return [key]
+
     pipeline: list[str] = []
     seen: set[str] = set()
-    for raw in (step1, step2, step3):
+    for raw in steps:
         key = (raw or "none").strip().lower()
         if key in ("none", "off", "không", ""):
             continue
         if key not in NORMALIZE_BACKENDS or key == "none":
             raise ValueError(f"Backend chuẩn hóa không hợp lệ: {raw!r}")
         if key in seen:
-            raise ValueError(
-                f"Trùng bước chuẩn hóa: {NORMALIZE_BACKENDS.get(key, key)}"
+            logger.warning(
+                "Trùng bước chuẩn hóa (bỏ qua): %s",
+                NORMALIZE_BACKENDS.get(key, key),
             )
+            continue
         seen.add(key)
         pipeline.append(key)
     return pipeline
@@ -492,6 +737,71 @@ def format_normalize_pipeline(backends: list[str]) -> str:
     if not backends:
         return NORMALIZE_BACKENDS["none"]
     return " → ".join(NORMALIZE_BACKENDS.get(b, b) for b in backends)
+
+
+def format_normalize_pipeline_list(backends: list[str]) -> str:
+    """Numbered markdown for the Gradio pipeline builder."""
+    if not backends:
+        return (
+            "**Chưa có bước** — khi TTS chỉ áp dụng dọn dấu câu (post-process)."
+        )
+    lines = [f"**{i}.** {NORMALIZE_BACKENDS.get(k, k)}" for i, k in enumerate(backends, 1)]
+    return f"{format_normalize_pipeline(backends)}\n\n" + "\n".join(lines)
+
+
+def pipeline_selector_choices(steps: list[str]) -> list[tuple[str, str]]:
+    return [
+        (f"{i + 1}. {NORMALIZE_BACKENDS.get(k, k)}", str(i))
+        for i, k in enumerate(steps)
+    ]
+
+
+def _parse_pipeline_index(index: int | str | None) -> int | None:
+    if index is None or index == "":
+        return None
+    try:
+        return int(index)
+    except (TypeError, ValueError):
+        return None
+
+
+def pipeline_add_step(steps: list[str] | None, new_step: str) -> list[str]:
+    result = list(steps or [])
+    key = (new_step or "").strip().lower()
+    if not key or key == "none":
+        return result
+    if key not in NORMALIZE_BACKENDS:
+        raise ValueError(f"Backend chuẩn hóa không hợp lệ: {new_step!r}")
+    if key in result:
+        logger.warning(
+            "Trùng bước — không thêm lại: %s",
+            NORMALIZE_BACKENDS.get(key, key),
+        )
+        return result
+    result.append(key)
+    return result
+
+
+def pipeline_remove_at(steps: list[str] | None, index: int | str | None) -> list[str]:
+    result = list(steps or [])
+    idx = _parse_pipeline_index(index)
+    if idx is None or not (0 <= idx < len(result)):
+        return result
+    result.pop(idx)
+    return result
+
+
+def pipeline_move(
+    steps: list[str] | None, index: int | str | None, direction: int
+) -> list[str]:
+    result = list(steps or [])
+    idx = _parse_pipeline_index(index)
+    if idx is None:
+        return result
+    new_idx = idx + direction
+    if 0 <= idx < len(result) and 0 <= new_idx < len(result):
+        result[idx], result[new_idx] = result[new_idx], result[idx]
+    return result
 
 
 def normalize_text_pipeline(text: str, backends: list[str]) -> str:
@@ -506,38 +816,42 @@ PREVIEW_MAX_CHARS = 20_000
 
 def preview_normalize_output(
     text: str,
-    step1: str,
-    step2: str,
-    step3: str,
+    pipeline_steps: list[str] | str | None,
     chunk_max_chars: int = 135,
-    max_preview_chars: int = PREVIEW_MAX_CHARS,
+    mode: NormalizeInputMode = "raw",
+    max_preview_chars: int | None = None,
 ) -> str:
     """
     Chạy pipeline chuẩn hóa trên văn bản (ô 3) — xem trước khi TTS.
-    Không cần load model inference.
+    Không cần load model inference. Hiển thị toàn bộ text đã chuẩn hóa.
     """
     raw = (text or "").strip()
     if not raw:
         return "(Chưa có văn bản — nhập ô số 3 hoặc upload file .txt / .md)"
 
-    pipeline = build_normalize_pipeline(step1, step2, step3)
+    input_mode = parse_input_mode(mode)
+    pipeline = build_normalize_pipeline(pipeline_steps)
     label = format_normalize_pipeline(pipeline)
-    normalized = prepare_tts_text(raw, pipeline)
+    normalized = normalize_full_document(raw, pipeline, input_mode)
     chunks = split_text_for_tts(raw, max_chars=int(chunk_max_chars))
 
+    mode_label = INPUT_MODE_CHOICES.get(input_mode, input_mode)
     lines = [
-        f"Pipeline: {label}",
-        f"Gốc: {len(raw):,} ký tự → sau chuẩn hóa: {len(normalized):,} ký tự",
+        f"Chế độ nhập: {mode_label}",
+        f"Pipeline: {label}" + (
+            " (bỏ qua khi TTS)" if input_mode == "prepared" else ""
+        ),
+        f"Gốc: {len(raw):,} ký tự → sau xử lý: {len(normalized):,} ký tự",
         f"Chunks TTS (max {int(chunk_max_chars)} ký tự/chunk): {len(chunks)}",
         "",
-        "── Text sau pipeline (lowercase + dọn dấu câu) ──",
+        "── Text đầy đủ sau chuẩn hóa ──",
     ]
 
-    if len(normalized) > max_preview_chars:
+    if max_preview_chars is not None and len(normalized) > max_preview_chars:
         lines.append(normalized[:max_preview_chars])
         lines.append(
             f"\n… (còn {len(normalized) - max_preview_chars:,} ký tự — "
-            "bấm Tổng hợp để xử lý toàn bộ)"
+            "bấm Xuất .txt hoặc Tổng hợp để xử lý toàn bộ)"
         )
     else:
         lines.append(normalized)
@@ -545,12 +859,127 @@ def preview_normalize_output(
     if len(chunks) > 1:
         lines.extend(["", "── Xem trước từng chunk (5 chunk đầu) ──"])
         for i, ch in enumerate(chunks[:5]):
-            chunk_norm = prepare_tts_text(ch.text, pipeline)
+            chunk_norm = prepare_for_tts(ch.text, pipeline, input_mode)
             lines.append(f"[{i + 1}/{len(chunks)}] {chunk_norm}")
         if len(chunks) > 5:
             lines.append(f"… và {len(chunks) - 5} chunk nữa")
 
     return "\n".join(lines)
+
+
+def vinorm_available() -> bool:
+    try:
+        import vinorm  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def compute_tts_checkpoint_key(
+    gen_text: str,
+    norm_pipeline: list[str],
+    chunk_max_chars: int,
+    speed: float = 1.0,
+    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
+    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
+    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
+    pause_forced: float = PAUSE_FORCED_SPLIT_DEFAULT,
+    asset_voice_id: str = "",
+    input_mode: NormalizeInputMode = "raw",
+) -> str:
+    payload = {
+        "text_hash": hashlib.sha256(gen_text.encode("utf-8")).hexdigest(),
+        "pipeline": norm_pipeline,
+        "input_mode": parse_input_mode(input_mode),
+        "chunk_max_chars": int(chunk_max_chars),
+        "speed": float(speed),
+        "pause_sentence": float(pause_sentence),
+        "pause_paragraph": float(pause_paragraph),
+        "pause_chapter": float(pause_chapter),
+        "pause_forced": float(pause_forced),
+        "asset_voice_id": asset_voice_id or "",
+    }
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def checkpoint_dir(output_dir: Path) -> Path:
+    return output_dir / ".checkpoints" / CHECKPOINT_SUBDIR
+
+
+def _write_checkpoint_wav(path: Path, wav: np.ndarray, sample_rate: int) -> None:
+    wav_f = wav.astype(np.float32)
+    peak = np.max(np.abs(wav_f)) if wav_f.size else 1.0
+    if peak > 1.0:
+        wav_f = wav_f / peak
+    wav_i16 = (wav_f * 32767).astype(np.int16)
+    wavfile.write(str(path), sample_rate, wav_i16)
+
+
+def _read_checkpoint_wav(path: Path) -> np.ndarray:
+    _sr, data = wavfile.read(str(path))
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    if data.dtype != np.float32:
+        data = data.astype(np.float32) / np.iinfo(data.dtype).max
+    return data
+
+
+def save_tts_checkpoint_chunk(
+    output_dir: Path,
+    chunk_index: int,
+    wav: np.ndarray,
+    sample_rate: int,
+    manifest: dict,
+) -> None:
+    ckpt = checkpoint_dir(output_dir)
+    ckpt.mkdir(parents=True, exist_ok=True)
+    chunk_path = ckpt / f"chunk_{chunk_index:03d}.wav"
+    if wav is not None and getattr(wav, "size", 0) > 0:
+        _write_checkpoint_wav(chunk_path, wav, sample_rate)
+    manifest_path = ckpt / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_tts_checkpoint_chunks(
+    output_dir: Path,
+    checkpoint_key: str,
+    num_chunks: int,
+) -> tuple[dict[int, np.ndarray], int]:
+    """
+    Đọc chunk wav đã lưu nếu manifest khớp.
+    Trả (map index→wav, index bắt đầu cần tổng hợp).
+    """
+    ckpt = checkpoint_dir(output_dir)
+    manifest_path = ckpt / "manifest.json"
+    if not manifest_path.is_file():
+        return {}, 0
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}, 0
+
+    if manifest.get("checkpoint_key") != checkpoint_key:
+        return {}, 0
+
+    loaded: dict[int, np.ndarray] = {}
+    resume_from = 0
+    for i in range(num_chunks):
+        chunk_path = ckpt / f"chunk_{i:03d}.wav"
+        if chunk_path.is_file():
+            wav = _read_checkpoint_wav(chunk_path)
+            if wav.size > 0:
+                loaded[i] = wav
+                resume_from = i + 1
+            else:
+                break
+        else:
+            break
+    return loaded, resume_from
 
 
 def prepare_tts_text(text: str, backend: str | list[str] = "vinorm") -> str:
@@ -560,7 +989,7 @@ def prepare_tts_text(text: str, backend: str | list[str] = "vinorm") -> str:
         )
     else:
         normalized = normalize_text(text, backend)
-    return post_process_text(normalized).lower()
+    return post_process_text(normalized, apply_lower=True)
 
 
 def normalize_vietnamese(text: str) -> str:

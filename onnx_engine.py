@@ -1,7 +1,6 @@
 """
 ZipVoice Vietnamese ONNX inference engine.
-Text encoder + flow-matching decoder run via ONNX Runtime;
-Vocos vocoder stays PyTorch (upstream design).
+ZipVoice encoder/decoder + Vocos vocoder: ONNX Runtime (numpy/librosa).
 """
 from __future__ import annotations
 
@@ -9,41 +8,35 @@ import gc
 import json
 import logging
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
+import numpy as np
 import onnxruntime as ort
-import torch
-import torchaudio
-from vocos import Vocos
+import soundfile as sf
+from scipy.signal import resample_poly
 
 from config import (
     ONNX_DIR,
     ONNX_MODEL_JSON,
     ONNX_TOKENS,
-    VOCODER_DIR,
+    VOCODER_ONNX,
     apply_cpu_env,
     is_force_cpu,
     onnx_files,
     use_onnx_int8,
 )
-
 from espeak_tokenizer import EspeakTokenizer
 from vocos_fbank import VocosFbank
+from vocos_istft import vocos_istft
 
 apply_cpu_env()
 
 SAMPLING_RATE = 24000
 FEAT_SCALE = 0.1
 TARGET_RMS = 0.1
+MIN_VOCODER_MEL_FRAMES = 1
 
 logger = logging.getLogger("zipvoice_onnx_gui")
-
-if is_force_cpu():
-    threads = os.environ.get("ZIPVOICE_CPU_THREADS", "4")
-    try:
-        torch.set_num_threads(int(threads))
-    except Exception:
-        pass
 
 
 def _get_time_steps(
@@ -51,10 +44,19 @@ def _get_time_steps(
     t_end: float = 1.0,
     num_step: int = 10,
     t_shift: float = 1.0,
-    device: torch.device = torch.device("cpu"),
-) -> torch.Tensor:
-    timesteps = torch.linspace(t_start, t_end, num_step + 1).to(device)
-    return t_shift * timesteps / (1 + (t_shift - 1) * timesteps)
+) -> np.ndarray:
+    timesteps = np.linspace(t_start, t_end, num_step + 1, dtype=np.float32)
+    return (t_shift * timesteps / (1 + (t_shift - 1) * timesteps)).astype(np.float32)
+
+
+def _load_wav_24k(path: str, target_sr: int = SAMPLING_RATE) -> np.ndarray:
+    audio, sr = sf.read(path, always_2d=False)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=-1)
+    audio = audio.astype(np.float32)
+    if sr != target_sr:
+        audio = resample_poly(audio, target_sr, sr).astype(np.float32)
+    return audio
 
 
 class OnnxModel:
@@ -64,24 +66,17 @@ class OnnxModel:
         fm_decoder_path: str,
         num_thread: int = 1,
     ):
-        session_opts = ort.SessionOptions()
-        session_opts.inter_op_num_threads = num_thread
-        session_opts.intra_op_num_threads = num_thread
-        self.session_opts = session_opts
-        self.init_text_encoder(text_encoder_path)
-        self.init_fm_decoder(fm_decoder_path)
-
-    def init_text_encoder(self, model_path: str):
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = num_thread
+        opts.intra_op_num_threads = num_thread
         self.text_encoder = ort.InferenceSession(
-            model_path,
-            sess_options=self.session_opts,
+            text_encoder_path,
+            sess_options=opts,
             providers=["CPUExecutionProvider"],
         )
-
-    def init_fm_decoder(self, model_path: str):
         self.fm_decoder = ort.InferenceSession(
-            model_path,
-            sess_options=self.session_opts,
+            fm_decoder_path,
+            sess_options=opts,
             providers=["CPUExecutionProvider"],
         )
         meta = self.fm_decoder.get_modelmeta().custom_metadata_map
@@ -89,102 +84,132 @@ class OnnxModel:
 
     def run_text_encoder(
         self,
-        tokens: torch.Tensor,
-        prompt_tokens: torch.Tensor,
-        prompt_features_len: torch.Tensor,
-        speed: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        tokens: np.ndarray,
+        prompt_tokens: np.ndarray,
+        prompt_features_len: np.ndarray,
+        speed: np.ndarray,
+    ) -> np.ndarray:
+        te_in = self.text_encoder.get_inputs()
         out = self.text_encoder.run(
             [self.text_encoder.get_outputs()[0].name],
             {
-                self.text_encoder.get_inputs()[0].name: tokens.numpy(),
-                self.text_encoder.get_inputs()[1].name: prompt_tokens.numpy(),
-                self.text_encoder.get_inputs()[2].name: prompt_features_len.numpy(),
-                self.text_encoder.get_inputs()[3].name: speed.numpy(),
+                te_in[0].name: tokens,
+                te_in[1].name: prompt_tokens,
+                te_in[2].name: prompt_features_len,
+                te_in[3].name: speed,
             },
         )
-        return torch.from_numpy(out[0])
+        return out[0]
 
     def run_fm_decoder(
         self,
-        t: torch.Tensor,
-        x: torch.Tensor,
-        text_condition: torch.Tensor,
-        speech_condition: torch.Tensor,
-        guidance_scale: torch.Tensor,
-    ) -> torch.Tensor:
+        t: np.ndarray,
+        x: np.ndarray,
+        text_condition: np.ndarray,
+        speech_condition: np.ndarray,
+        guidance_scale: np.ndarray,
+    ) -> np.ndarray:
+        fm_in = self.fm_decoder.get_inputs()
         out = self.fm_decoder.run(
             [self.fm_decoder.get_outputs()[0].name],
             {
-                self.fm_decoder.get_inputs()[0].name: t.numpy(),
-                self.fm_decoder.get_inputs()[1].name: x.numpy(),
-                self.fm_decoder.get_inputs()[2].name: text_condition.numpy(),
-                self.fm_decoder.get_inputs()[3].name: speech_condition.numpy(),
-                self.fm_decoder.get_inputs()[4].name: guidance_scale.numpy(),
+                fm_in[0].name: t,
+                fm_in[1].name: x,
+                fm_in[2].name: text_condition,
+                fm_in[3].name: speech_condition,
+                fm_in[4].name: guidance_scale,
             },
         )
-        return torch.from_numpy(out[0])
+        return out[0]
 
 
 def onnx_sample(
     model: OnnxModel,
     tokens: List[List[int]],
     prompt_tokens: List[List[int]],
-    prompt_features: torch.Tensor,
+    prompt_features: np.ndarray,
     speed: float = 1.0,
     t_shift: float = 0.5,
     guidance_scale: float = 1.0,
     num_step: int = 16,
-) -> torch.Tensor:
+) -> np.ndarray:
     assert len(tokens) == len(prompt_tokens) == 1
-    tokens_t = torch.tensor(tokens, dtype=torch.int64)
-    prompt_tokens_t = torch.tensor(prompt_tokens, dtype=torch.int64)
-    prompt_features_len = torch.tensor(prompt_features.size(1), dtype=torch.int64)
-    speed_t = torch.tensor(speed, dtype=torch.float32)
+    tokens_np = np.array(tokens, dtype=np.int64)
+    prompt_tokens_np = np.array(prompt_tokens, dtype=np.int64)
+    # prompt_features: (time, feat) -> batch (1, time, feat)
+    if prompt_features.ndim == 2:
+        prompt_features = prompt_features[np.newaxis, ...]
+    prompt_len = np.array([prompt_features.shape[1]], dtype=np.int64)
+    speed_np = np.array(speed, dtype=np.float32)
 
     text_condition = model.run_text_encoder(
-        tokens_t, prompt_tokens_t, prompt_features_len, speed_t
+        tokens_np, prompt_tokens_np, prompt_len, speed_np
     )
-
     batch_size, num_frames, _ = text_condition.shape
     feat_dim = model.feat_dim
 
-    timesteps = _get_time_steps(
-        t_start=0.0, t_end=1.0, num_step=num_step, t_shift=t_shift
-    )
-    x = torch.randn(batch_size, num_frames, feat_dim)
-    speech_condition = torch.nn.functional.pad(
-        prompt_features, (0, 0, 0, num_frames - prompt_features.shape[1])
-    )
-    guidance_scale_t = torch.tensor(guidance_scale, dtype=torch.float32)
+    timesteps = _get_time_steps(0.0, 1.0, num_step, t_shift)
+    rng = np.random.default_rng()
+    x = rng.standard_normal((batch_size, num_frames, feat_dim), dtype=np.float32)
+
+    pad_frames = num_frames - prompt_features.shape[1]
+    if pad_frames > 0:
+        speech_condition = np.pad(
+            prompt_features,
+            ((0, 0), (0, pad_frames), (0, 0)),
+            mode="constant",
+        )
+    else:
+        speech_condition = prompt_features[:, :num_frames, :]
+
+    guidance_np = np.array(guidance_scale, dtype=np.float32)
 
     for step in range(num_step):
+        t_step = np.array(timesteps[step], dtype=np.float32).reshape(())
         v = model.run_fm_decoder(
-            t=timesteps[step],
-            x=x,
-            text_condition=text_condition,
-            speech_condition=speech_condition,
-            guidance_scale=guidance_scale_t,
+            t_step,
+            x,
+            text_condition,
+            speech_condition,
+            guidance_np,
         )
         x = x + v * (timesteps[step + 1] - timesteps[step])
 
-    return x[:, prompt_features_len.item() :, :]
+    trim = int(prompt_len[0])
+    pred = x[:, trim:, :]
+    if pred.shape[1] == 0:
+        logger.warning(
+            "onnx_sample: 0 mel frames after trim (num_frames=%d, prompt_len=%d)",
+            num_frames,
+            trim,
+        )
+    return pred
 
 
-def _load_vocoder() -> Vocos:
-    vocoder = Vocos.from_hparams(str(VOCODER_DIR / "config.yaml"))
-    state_dict = torch.load(
-        VOCODER_DIR / "pytorch_model.bin",
-        weights_only=True,
-        map_location="cpu",
+def _load_vocoder() -> ort.InferenceSession:
+    opts = ort.SessionOptions()
+    num_thread = int(os.environ.get("ZIPVOICE_ONNX_THREADS", "1"))
+    opts.inter_op_num_threads = num_thread
+    opts.intra_op_num_threads = num_thread
+    return ort.InferenceSession(
+        str(VOCODER_ONNX),
+        sess_options=opts,
+        providers=["CPUExecutionProvider"],
     )
-    vocoder.load_state_dict(state_dict)
-    return vocoder.eval()
+
+
+def _vocos_decode(vocoder: ort.InferenceSession, mel_bct: np.ndarray) -> np.ndarray:
+    """mel (batch, channels, time) -> waveform numpy 1d."""
+    mel_frames = int(mel_bct.shape[2]) if mel_bct.ndim == 3 else 0
+    logger.debug("mel shape before vocoder: %s", mel_bct.shape)
+    if mel_frames < MIN_VOCODER_MEL_FRAMES:
+        logger.warning("skip vocoder: mel frames=%d", mel_frames)
+        return np.array([], dtype=np.float32)
+    mag, x, y = vocoder.run(None, {"mels": mel_bct.astype(np.float32)})
+    return vocos_istft(mag, x, y)
 
 
 class OnnxTTSEngine:
-    """Lazy-loaded singleton for Gradio ONNX inference."""
-
     _instance: Optional["OnnxTTSEngine"] = None
 
     def __init__(self, use_int8: bool | None = None) -> None:
@@ -205,10 +230,8 @@ class OnnxTTSEngine:
         self.vocoder = _load_vocoder()
         self.sampling_rate = model_config["feature"]["sampling_rate"]
         logger.info(
-            "OnnxTTSEngine ready | int8=%s | te=%s | fm=%s",
+            "OnnxTTSEngine ready | int8=%s | onnx+numpy | vocoder=onnx+librosa",
             self.use_int8,
-            te_name,
-            fm_name,
         )
 
     @classmethod
@@ -216,10 +239,11 @@ class OnnxTTSEngine:
         want_int8 = use_onnx_int8() if use_int8 is None else use_int8
         if cls._instance is None or cls._instance.use_int8 != want_int8:
             print(
-                f"[ZipVoice ONNX] Loading models (int8={want_int8}, first run may take a minute)..."
+                f"[ZipVoice ONNX] Loading (int8={want_int8}) — "
+                "ZipVoice=ONNX, vocoder=ONNX Vocos + librosa ISTFT..."
             )
             cls._instance = cls(use_int8=want_int8)
-            print("[ZipVoice ONNX] Models ready.")
+            print("[ZipVoice ONNX] Ready.")
         return cls._instance
 
     def generate(
@@ -231,48 +255,49 @@ class OnnxTTSEngine:
         num_step: int = 16,
         guidance_scale: float = 1.0,
         t_shift: float = 0.5,
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         logger.info("ONNX generate chunk (%d chars)...", len(text))
-        with torch.inference_mode():
-            tokens = self.tokenizer.texts_to_token_ids([text])
-            prompt_tokens = self.tokenizer.texts_to_token_ids([prompt_text])
 
-            prompt_audio, prompt_sr = torchaudio.load(prompt_wav)
-            if prompt_sr != self.sampling_rate:
-                prompt_audio = torchaudio.transforms.Resample(
-                    orig_freq=prompt_sr, new_freq=self.sampling_rate
-                )(prompt_audio)
+        tokens = self.tokenizer.texts_to_token_ids([text])
+        prompt_tokens = self.tokenizer.texts_to_token_ids([prompt_text])
 
-            prompt_rms = torch.sqrt(torch.mean(torch.square(prompt_audio)))
-            if prompt_rms < TARGET_RMS:
-                prompt_audio = prompt_audio * TARGET_RMS / prompt_rms
+        prompt_audio = _load_wav_24k(prompt_wav, self.sampling_rate)
+        prompt_rms = float(np.sqrt(np.mean(np.square(prompt_audio))))
+        if prompt_rms < TARGET_RMS:
+            prompt_audio = prompt_audio * (TARGET_RMS / prompt_rms)
 
-            prompt_features = (
-                self.feature_extractor.extract(
-                    prompt_audio, sampling_rate=self.sampling_rate
-                ).unsqueeze(0)
-                * FEAT_SCALE
+        prompt_features = self.feature_extractor.extract(
+            prompt_audio, sampling_rate=self.sampling_rate
+        )
+        prompt_features = prompt_features * FEAT_SCALE
+
+        pred_features = onnx_sample(
+            model=self.model,
+            tokens=tokens,
+            prompt_tokens=prompt_tokens,
+            prompt_features=prompt_features,
+            speed=speed,
+            t_shift=t_shift,
+            guidance_scale=guidance_scale,
+            num_step=num_step,
+        )
+
+        mel_frames = int(pred_features.shape[1]) if pred_features.ndim == 3 else 0
+        if mel_frames < MIN_VOCODER_MEL_FRAMES:
+            logger.warning(
+                "skip vocoder: mel frames=%d (chunk %d chars)",
+                mel_frames,
+                len(text),
             )
+            return np.array([], dtype=np.float32)
 
-            pred_features = onnx_sample(
-                model=self.model,
-                tokens=tokens,
-                prompt_tokens=prompt_tokens,
-                prompt_features=prompt_features,
-                speed=speed,
-                t_shift=t_shift,
-                guidance_scale=guidance_scale,
-                num_step=num_step,
-            )
+        # (B, T, C) -> (B, C, T) for Vocos
+        mel = np.transpose(pred_features, (0, 2, 1)) / FEAT_SCALE
+        wav = _vocos_decode(self.vocoder, mel.astype(np.float32))
 
-            pred_features = pred_features.permute(0, 2, 1) / FEAT_SCALE
-            wav = self.vocoder.decode(pred_features).squeeze(1).clamp(-1, 1)
+        if prompt_rms < TARGET_RMS:
+            wav = wav * (prompt_rms / TARGET_RMS)
 
-            if prompt_rms < TARGET_RMS:
-                wav = wav * prompt_rms / TARGET_RMS
-
-            out = wav.cpu()
-            del prompt_audio, prompt_features, pred_features, wav
-            if is_force_cpu():
-                gc.collect()
-            return out
+        if is_force_cpu():
+            gc.collect()
+        return wav.astype(np.float32)

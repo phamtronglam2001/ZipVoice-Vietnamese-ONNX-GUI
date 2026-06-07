@@ -1,13 +1,8 @@
-# Runtime — ONNX inference + Gradio GUI (torch/torchaudio/piper_phonemize via setup_cpu.ps1)
+# ZipVoice ONNX inference + GUI (numpy path, no PyTorch)
 onnxruntime>=1.18.0
-vocos
 gradio>=4.44.0
 numpy>=1.24.0,<=1.26.4
 scipy
 soundfile
 pydub
-
-# Text normalization pipeline (optional steps in GUI)
-vinorm
-vietnormalizer
-sea-g2p>=0.7.5
+librosa

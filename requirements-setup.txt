@@ -1,2 +1,0 @@
-# One-time setup only (download_models.py) — not needed after vocoder is cached
-huggingface_hub
