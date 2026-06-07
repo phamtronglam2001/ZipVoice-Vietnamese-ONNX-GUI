@@ -17,7 +17,6 @@ REF_INFO_JSON = ASSETS_DIR / "ref_info.json"
 FFMPEG_BIN = ROOT / "ffmpeg" / "bin"
 SYSTEM_FFMPEG_BIN = Path(r"C:\ffmpeg\bin")
 
-VENDOR_DIR = ROOT / "vendor" / "ZipVoice"
 MODELS_DIR = ROOT / "models"
 ONNX_DIR = MODELS_DIR / "onnx"
 VOCODER_DIR = MODELS_DIR / "vocoder"
@@ -38,12 +37,6 @@ def ensure_ffmpeg_on_path() -> None:
             if bin_str not in path.split(os.pathsep):
                 os.environ["PATH"] = bin_str + os.pathsep + path
             return
-
-
-def ensure_vendor_on_path() -> None:
-    vendor = str(VENDOR_DIR)
-    if vendor not in os.sys.path:
-        os.sys.path.insert(0, vendor)
 
 
 def is_force_cpu() -> bool:
@@ -87,9 +80,5 @@ def vocoder_ready() -> bool:
     ).is_file()
 
 
-def vendor_ready() -> bool:
-    return (VENDOR_DIR / "zipvoice").is_dir()
-
-
 def models_ready(use_int8: bool | None = None) -> bool:
-    return onnx_ready(use_int8) and vocoder_ready() and vendor_ready()
+    return onnx_ready(use_int8) and vocoder_ready()

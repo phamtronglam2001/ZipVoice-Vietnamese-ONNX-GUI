@@ -22,19 +22,15 @@ from config import (
     ONNX_TOKENS,
     VOCODER_DIR,
     apply_cpu_env,
-    ensure_vendor_on_path,
     is_force_cpu,
     onnx_files,
-    set_offline_env,
     use_onnx_int8,
 )
 
-apply_cpu_env()
-ensure_vendor_on_path()
-set_offline_env()
+from espeak_tokenizer import EspeakTokenizer
+from vocos_fbank import VocosFbank
 
-from zipvoice.tokenizer.tokenizer import EspeakTokenizer  # noqa: E402
-from zipvoice.utils.feature import VocosFbank  # noqa: E402
+apply_cpu_env()
 
 SAMPLING_RATE = 24000
 FEAT_SCALE = 0.1

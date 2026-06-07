@@ -7,7 +7,6 @@ from __future__ import annotations
 import gc
 import os
 import sys
-import tempfile
 import traceback
 
 import gradio as gr
@@ -48,7 +47,6 @@ from utils import (  # noqa: E402
     prepare_tts_text,
     preprocess_ref_audio_text,
     read_text_file,
-    save_spectrogram,
     preview_normalize_output,
     split_text_for_tts,
 )
@@ -132,7 +130,7 @@ def infer_tts(
     chunk_max_chars: int,
     use_int8: bool,
     progress=gr.Progress(),
-) -> tuple[str | None, tuple[int, np.ndarray] | None, str | None, str]:
+) -> tuple[str | None, tuple[int, np.ndarray] | None, str]:
     ref_audio_path = _resolve_ref_path(ref_audio_path, asset_voice_id)
     if not ref_audio_path:
         raise gr.Error("Chọn giọng từ menu assets/ hoặc upload file giọng mẫu.")
@@ -223,10 +221,6 @@ def infer_tts(
             text_preview=gen_text,
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            spec_path = tmp.name
-        save_spectrogram(final_wave, spec_path)
-
         est_min = max(1, int(len(tts_chunks) * 5 / 60))
         onnx_mode = "INT8" if use_int8 else "FP32"
         status = (
@@ -237,7 +231,7 @@ def infer_tts(
             f"**Text sau chuẩn hóa (đoạn 1):** {normalized_preview or '(trống)'}"
         )
         logger.info("infer_tts done | file=%s", saved)
-        return str(saved), (engine.sampling_rate, final_wave), spec_path, status
+        return str(saved), (engine.sampling_rate, final_wave), status
 
     except gr.Error:
         raise
@@ -366,7 +360,6 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         with gr.Row():
             output_file = gr.File(label="Tải file output/", type="filepath")
             output_audio = gr.Audio(label="Nghe thử", type="filepath")
-        output_spec = gr.Image(label="Spectrogram")
 
         gr.Markdown(
             """
@@ -404,7 +397,7 @@ nghỉ **0.35s/câu**, **0.65s/đoạn**, **1.2s/tiêu đề chương**.
                 chunk_max_chars,
                 use_int8,
             ],
-            outputs=[output_file, output_audio, output_spec, save_status],
+            outputs=[output_file, output_audio, save_status],
             concurrency_limit=1,
         )
 

@@ -8,7 +8,7 @@ echo  ============================================
 echo   ZipVoice Vietnamese ONNX TTS - CPU Install
 echo  ============================================
 echo   ONNX weights already in models/onnx/
-echo   Setup downloads vocoder + tokenizer (~100 MB)
+echo   Setup downloads vocoder only (~50 MB)
 echo  ============================================
 echo.
 

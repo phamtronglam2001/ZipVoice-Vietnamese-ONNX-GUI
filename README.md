@@ -13,7 +13,7 @@ Tiếng Việt | [English](README_EN.md)
 | | [ZipVoice-Vietnamese-GUI](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-GUI) | Repo này |
 |---|---|---|
 | Inference | PyTorch checkpoint | ONNX (INT8 mặc định) |
-| Download setup | ~2 GB (model + vocoder) | ~100 MB (vocoder + tokenizer) |
+| Download setup | ~2 GB (model + vocoder) | ~50 MB (vocoder only) |
 | ONNX trong repo | Không | Có sẵn `models/onnx/` |
 | Port mặc định | 7860 | 7862 |
 
@@ -45,13 +45,31 @@ Chọn **Bước 1 → 2 → 3** (mỗi bước: không / vinorm / vietnormalize
 
 ```
 models/onnx/          # text_encoder*.onnx, fm_decoder*.onnx, model.json, tokens.txt (có sẵn)
-models/vocoder/       # tải bởi setup
-vendor/ZipVoice/      # clone bởi setup (EspeakTokenizer)
-assets/ref_audio/     # giọng mẫu
-app.py                # Gradio GUI
-onnx_engine.py        # ONNX inference
+models/vocoder/       # tải bởi setup (~50 MB)
+espeak_tokenizer.py   # Espeak G2P (piper_phonemize) — không clone ZipVoice
+vocos_fbank.py        # mel features cho prompt audio
+app.py                # Gradio GUI (mở browser = chỉ UI, inference chạy Python local)
+onnx_engine.py        # ONNX Runtime + Vocos PyTorch
 utils.py              # chuẩn hóa + chia văn bản dài
 ```
+
+## Không phải ONNX trên browser
+
+Gradio mở **http://127.0.0.1:7862** trong trình duyệt nhưng toàn bộ inference chạy **process Python trên máy** (ONNX Runtime + PyTorch vocoder). Đây không phải `onnxruntime-web` — không thể “chỉ mở browser là chạy” mà không cài runtime.
+
+## Dependencies tối thiểu (`requirements-cpu.txt`)
+
+| Gói | Vì sao cần |
+|-----|------------|
+| `onnxruntime` | text_encoder + fm_decoder ONNX |
+| `torch` + `torchaudio` | Vocos vocoder + tensor giữa các bước ONNX |
+| `vocos` | mel → waveform |
+| `piper_phonemize` | Espeak phonemize tiếng Việt |
+| `gradio` | GUI |
+| `pydub` / `scipy` / `soundfile` | xử lý giọng mẫu + xuất WAV/MP3 |
+| `vinorm` / `vietnormalizer` / `sea-g2p` | pipeline chuẩn hóa (tuỳ chọn) |
+
+**Đã bỏ:** `lhotse`, `jieba`, `pypinyin`, `cn2an`, `inflect`, `librosa`, `matplotlib`, `safetensors`, `onnx` (export), clone `vendor/ZipVoice`.
 
 ## Tại sao vẫn cần PyTorch?
 

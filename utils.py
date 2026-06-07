@@ -11,11 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-import librosa
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from pydub import AudioSegment, silence
 from scipy.io import wavfile
@@ -544,12 +539,3 @@ def normalize_vietnamese(text: str) -> str:
     """Giữ tương thích code cũ — mặc định vinorm."""
     return normalize_text(text, "vinorm")
 
-
-def save_spectrogram(audio: np.ndarray, path: str | Path) -> None:
-    stft = librosa.stft(audio, n_fft=512, hop_length=256, win_length=512)
-    spec_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
-    plt.figure(figsize=(12, 4))
-    plt.imshow(spec_db, origin="lower", aspect="auto")
-    plt.colorbar()
-    plt.savefig(path, bbox_inches="tight")
-    plt.close()

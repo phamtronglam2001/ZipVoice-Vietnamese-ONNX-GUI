@@ -15,7 +15,7 @@ English | [Tiếng Việt](README.md)
 | | [ZipVoice-Vietnamese-GUI](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-GUI) | This repository |
 |---|---|---|
 | Inference backend | PyTorch checkpoint | ONNX (INT8 by default) |
-| First-time download | ~2 GB (model + vocoder) | ~100 MB (vocoder + tokenizer runtime) |
+| First-time download | ~2 GB (model + vocoder) | ~50 MB (vocoder only) |
 | ONNX weights in repo | No | Yes (`models/onnx/`) |
 | Default port | 7860 | 7862 |
 
@@ -78,16 +78,48 @@ Use **Preview normalization** to run the pipeline on box 3 text before synthesis
 
 ---
 
+## This is not browser-only ONNX
+
+Gradio opens a URL in your browser for the **user interface only**. All inference runs in a **local Python process** on your machine:
+
+- ONNX Runtime executes the text encoder and flow-matching decoder
+- PyTorch runs the Vocos vocoder and lightweight tensor glue code
+- `piper_phonemize` / espeak phonemizes Vietnamese text
+
+This is **not** [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/). You cannot skip installing runtimes and “just open a page” to synthesize speech.
+
+For a future **standalone `.exe`**, the same binaries are bundled inside the executable (PyInstaller/Nuitka, etc.) — the dependency stack below still applies, only the packaging changes.
+
+---
+
+## Minimal dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `onnxruntime` | ONNX inference (encoder + decoder) |
+| `torch`, `torchaudio` | Vocos vocoder; audio tensors |
+| `vocos` | Mel-spectrogram → waveform |
+| `piper_phonemize` | Espeak Vietnamese phonemization |
+| `gradio` | Desktop-style web GUI |
+| `pydub`, `scipy`, `soundfile` | Reference audio prep; WAV/MP3 export |
+| `vinorm`, `vietnormalizer`, `sea-g2p` | Optional normalization pipeline |
+
+**Removed** (were copied from the full PyTorch project but unused here): `lhotse`, `jieba`, `pypinyin`, `cn2an`, `inflect`, `librosa`, `matplotlib`, `safetensors`, `onnx` (export tool), entire `vendor/ZipVoice` clone.
+
+Built-in modules replace the vendor tree: `espeak_tokenizer.py`, `vocos_fbank.py`.
+
+---
+
 ## Project layout
 
 ```
-models/onnx/          # Bundled: text_encoder*.onnx, fm_decoder*.onnx, model.json, tokens.txt
-models/vocoder/       # Downloaded by setup (charactr/vocos-mel-24khz)
-vendor/ZipVoice/      # Cloned by setup (EspeakTokenizer only)
-assets/ref_audio/     # Reference voice WAV files
+models/onnx/          # Bundled ONNX weights
+models/vocoder/       # Downloaded once by setup
+espeak_tokenizer.py   # Minimal Espeak tokenizer
+vocos_fbank.py        # Prompt mel features (no lhotse)
 app.py                # Gradio GUI
-onnx_engine.py        # ONNX inference engine
-utils.py              # Normalization pipeline + long-text chunking
+onnx_engine.py        # ONNX + Vocos inference
+utils.py              # Normalization + long-text chunking
 ```
 
 ---

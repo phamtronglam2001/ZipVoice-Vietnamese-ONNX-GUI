@@ -1,25 +1,13 @@
-# CPU-only deps (torch/torchaudio installed separately via PyTorch CPU index)
-onnx>=1.16.0
+# Runtime — ONNX inference + Gradio GUI (torch/torchaudio/piper_phonemize via setup_cpu.ps1)
 onnxruntime>=1.18.0
-lhotse
 vocos
-safetensors
 gradio>=4.44.0
-huggingface_hub
-pydub
-librosa
-matplotlib
 numpy>=1.24.0,<=1.26.4
 scipy
 soundfile
-tqdm>=4.65.0
-pypinyin
-jieba
-cn2an
-inflect
-unidecode
+pydub
 
-# Text normalization (GUI: chọn 1 trong các backend)
+# Text normalization pipeline (optional steps in GUI)
 vinorm
 vietnormalizer
 sea-g2p>=0.7.5
