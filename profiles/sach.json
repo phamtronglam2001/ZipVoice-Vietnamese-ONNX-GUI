@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Sách — Ái Vy",
-  "description": "Audiobook: VieNeu + cấu trúc TTS + vinorm, giọng Ái Vy",
+  "description": "Audiobook: toàn bộ chuẩn hóa (sea-g2p → … → VieNeu), giọng Ái Vy",
   "voice": {
     "mode": "bundled",
     "voice_id": "ai_vy"
@@ -11,7 +11,7 @@
     "ref_wav": "",
     "ref_text": ""
   },
-  "pipeline": ["vieneu", "period_break", "vinorm"],
+  "pipeline": ["sea_g2p", "vietnormalizer", "vinorm", "period_break", "newline_sentence", "join_soft_breaks", "vieneu"],
   "chunk_max_chars": 135,
   "pause": {
     "sentence": 0.35,
