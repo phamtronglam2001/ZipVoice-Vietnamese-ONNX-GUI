@@ -1,7 +1,9 @@
-"""Minimal tests for normalize pipeline chaining (no vinorm required)."""
+"""Minimal tests for normalize pipeline chaining."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from period_linebreak import join_soft_breaks, newline_sentence_boundary, prepare_tts_structure
 from utils import (
@@ -9,6 +11,7 @@ from utils import (
     normalize_full_document,
     normalize_text_pipeline,
     post_process_text,
+    read_text_file,
     split_text_for_tts,
 )
 
@@ -51,6 +54,15 @@ class NormalizePipelineTests(unittest.TestCase):
         after_prior = "-> Một. Ví dụ"
         out = prepare_tts_structure(after_prior)
         self.assertEqual(out, "-> Một.\nVí dụ")
+
+    def test_read_text_file_normalizes_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.txt"
+            path.write_bytes("dòng một\r\ndòng hai\r\ndòng ba".encode("utf-8"))
+            text = read_text_file(str(path))
+        self.assertEqual(text, "dòng một\ndòng hai\ndòng ba")
+        self.assertNotIn("\r", text)
+        self.assertEqual(text.count("\n"), 2)
 
 
 if __name__ == "__main__":

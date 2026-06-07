@@ -76,10 +76,25 @@ from utils import (  # noqa: E402
     preview_normalize_output,
     save_tts_checkpoint_chunk,
     split_text_for_tts,
-    vinorm_available,
 )
 
 MAX_GEN_TEXT_CHARS = 500_000
+
+# Gradio textarea may corrupt Unicode/line breaks — CSS fixes display only.
+GRADIO_UNICODE_TEXTBOX_CSS = """
+.zv-unicode-text textarea,
+.zv-unicode-text input {
+    font-family: "Segoe UI", "Noto Sans", "DejaVu Sans", system-ui, sans-serif !important;
+    white-space: pre-wrap !important;
+    overflow-y: auto !important;
+    resize: vertical !important;
+}
+.zv-scroll-text textarea {
+    max-height: 60vh !important;
+    overflow-y: scroll !important;
+}
+"""
+TEXTBOX_UNICODE_CLASS = "zv-unicode-text zv-scroll-text"
 _voice_cache: list = []
 
 
@@ -106,13 +121,31 @@ def _on_voice_pick(voice_id: str) -> tuple[str | None, str, str]:
     return voice.audio_path, voice.transcript, note
 
 
-def _on_gen_txt_upload(file_path: str | None) -> str:
+def _on_gen_txt_upload(file_path: str | None):
+    """Populate textbox for display; keep path in State for pipeline source-of-truth."""
     if not file_path:
-        return gr.update()
+        return gr.update(), None
     try:
-        return read_text_file(file_path)
+        return read_text_file(file_path), file_path
     except ValueError as exc:
         raise gr.Error(str(exc)) from exc
+
+
+def _resolve_gen_text_for_pipeline(
+    gen_text: str,
+    gen_txt_source_path: str | None,
+) -> str:
+    """Pipeline/TTS must not trust Gradio textbox when input came from .txt upload.
+
+    Gradio may alter Unicode normalization, line breaks, or special characters
+    in textarea values. Re-read the original file (UTF-8 / UTF-8-BOM) instead.
+    """
+    if gen_txt_source_path:
+        try:
+            return read_text_file(gen_txt_source_path)
+        except ValueError as exc:
+            raise gr.Error(str(exc)) from exc
+    return gen_text
 
 
 def _refresh_pipeline_ui(
@@ -182,11 +215,6 @@ def _on_pipeline_reset():
 
 def _on_pipeline_audiobook_preset():
     steps = list(AUDIOBOOK_PRESET_PIPELINE)
-    if "vinorm" in steps and not vinorm_available():
-        logger.warning(
-            "Preset Sách/Audiobook: vinorm chưa cài — bước vinorm sẽ lỗi khi TTS "
-            "(pip install vinorm)."
-        )
     return _refresh_pipeline_ui(steps)
 
 
@@ -226,7 +254,7 @@ def _on_load_preset(preset_name: str | None):
         updates["pause_forced"],
         updates["speed"],
         updates["export_format"],
-        updates["use_int8"],
+        updates["onnx_quant_mode"],
         updates["synth_num_step"],
         updates["synth_guidance_scale"],
         updates["synth_t_shift"],
@@ -249,7 +277,7 @@ def _on_save_preset(
     pause_forced: float,
     speed: float,
     export_format: str,
-    use_int8: bool,
+    onnx_quant_mode: str,
     synth_num_step: int,
     synth_guidance_scale: float,
     synth_t_shift: float,
@@ -270,7 +298,7 @@ def _on_save_preset(
         pause_forced=pause_forced,
         speed=speed,
         export_format=export_format,
-        use_int8=use_int8,
+        onnx_quant_mode=onnx_quant_mode,
         num_step=synth_num_step,
         guidance_scale=synth_guidance_scale,
         t_shift=synth_t_shift,
@@ -290,13 +318,15 @@ def _on_save_preset(
 
 def preview_normalize(
     gen_text: str,
+    gen_txt_source_path: str | None,
     norm_pipeline: list[str] | None,
     chunk_max_chars: int,
     input_mode: str,
 ) -> str:
     try:
+        source_text = _resolve_gen_text_for_pipeline(gen_text, gen_txt_source_path)
         return preview_normalize_output(
-            gen_text,
+            source_text,
             norm_pipeline,
             chunk_max_chars=int(chunk_max_chars),
             mode=parse_input_mode(input_mode),
@@ -309,23 +339,25 @@ def preview_normalize(
 
 def export_normalized_text(
     gen_text: str,
+    gen_txt_source_path: str | None,
     norm_pipeline: list[str] | None,
     input_mode: str,
     export_path: str,
     gen_txt_file: str | None,
 ) -> tuple[str, str]:
-    if not gen_text.strip():
+    source_text = _resolve_gen_text_for_pipeline(gen_text, gen_txt_source_path)
+    if not source_text.strip():
         raise gr.Error("Vui lòng nhập văn bản (ô 3) trước khi xuất.")
     try:
         norm_pipeline = build_normalize_pipeline(norm_pipeline)
     except ValueError as exc:
         raise gr.Error(str(exc)) from exc
     mode = parse_input_mode(input_mode)
-    hint = gen_txt_file or "text"
+    hint = gen_txt_source_path or gen_txt_file or "text"
     path_arg = export_path.strip() if export_path and export_path.strip() else None
     try:
         saved = export_normalized_text_file(
-            gen_text,
+            source_text,
             norm_pipeline,
             mode=mode,
             output_path=path_arg,
@@ -334,7 +366,7 @@ def export_normalized_text(
     except ValueError as exc:
         raise gr.Error(str(exc)) from exc
     preview = preview_normalize_output(
-        gen_text,
+        source_text,
         norm_pipeline,
         chunk_max_chars=135,
         mode=mode,
@@ -365,16 +397,18 @@ def infer_tts(
     pause_chapter: float,
     pause_enum_item: float,
     pause_forced: float,
-    use_int8: bool,
+    onnx_quant_mode: str,
     synth_num_step: int,
     synth_guidance_scale: float,
     synth_t_shift: float,
     input_mode: str,
+    gen_txt_source_path: str | None,
     progress=gr.Progress(),
 ) -> tuple[str | None, tuple[int, np.ndarray] | None, str, str]:
     ref_audio_path = _resolve_ref_path(ref_audio_path, asset_voice_id)
     if not ref_audio_path:
         raise gr.Error("Chọn giọng từ menu assets/ hoặc upload file giọng mẫu.")
+    gen_text = _resolve_gen_text_for_pipeline(gen_text, gen_txt_source_path)
     if not gen_text.strip():
         raise gr.Error("Vui lòng nhập văn bản cần đọc (ô số 3).")
     if not ref_text.strip():
@@ -408,7 +442,7 @@ def infer_tts(
             )
             norm_label = f"{INPUT_MODE_CHOICES['prepared']} (pipeline bỏ qua)"
         logger.info(
-            "infer_tts | asset=%s | gen_len=%d | ref_len=%d | export=%s | norm=%s | mode=%s | chunk=%d | int8=%s",
+            "infer_tts | asset=%s | gen_len=%d | ref_len=%d | export=%s | norm=%s | mode=%s | chunk=%d | quant=%s",
             asset_voice_id,
             len(gen_text),
             len(ref_text.strip()),
@@ -416,10 +450,10 @@ def infer_tts(
             norm_label,
             tts_input_mode,
             chunk_max_chars,
-            use_int8,
+            onnx_quant_mode,
         )
 
-        engine = OnnxTTSEngine.get(use_int8=use_int8)
+        engine = OnnxTTSEngine.get(quant_mode=onnx_quant_mode)
         normalized_doc = normalize_full_document(
             gen_text, norm_pipeline, tts_input_mode
         )
@@ -544,7 +578,7 @@ def infer_tts(
         )
 
         est_min = max(1, int(len(tts_chunks) * 5 / 60))
-        onnx_mode = "INT8" if use_int8 else "FP32"
+        onnx_mode = str(onnx_quant_mode).upper()
         resume_note = (
             f" · **Resume:** chunk {resume_from + 1}"
             if resume_from > 0
@@ -585,6 +619,7 @@ def build_ui() -> gr.Blocks:
     initial_choices = dropdown_choices(_voice_cache)
 
     with gr.Blocks(title="ZipVoice Vietnamese ONNX TTS") as demo:
+        gen_txt_source_path = gr.State(value=None)
         gr.Markdown(
             """
 # ZipVoice Vietnamese ONNX TTS
@@ -616,11 +651,15 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                     label="2) Nội dung TRONG file giọng mẫu (bắt buộc)",
                     placeholder="Tự điền từ ref_info.json khi chọn giọng",
                     lines=3,
+                    max_lines=12,
+                    elem_classes=[TEXTBOX_UNICODE_CLASS],
                 )
                 gen_text = gr.Textbox(
                     label="3) Văn bản CẦN ĐỌC (output TTS)",
                     placeholder="Văn bản bạn muốn tổng hợp bằng giọng mẫu...",
-                    lines=8,
+                    lines=12,
+                    max_lines=40,
+                    elem_classes=[TEXTBOX_UNICODE_CLASS],
                 )
                 gen_txt_file = gr.File(
                     label="Hoặc upload file .txt / .md (điền vào ô 3)",
@@ -666,9 +705,13 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 choices=list(EXPORT_CHOICES.keys()),
                 value="WAV 24kHz",
             )
-            use_int8 = gr.Checkbox(
-                label="Dùng ONNX INT8 (nhanh hơn, nhẹ hơn RAM)",
-                value=True,
+            from onnx_quant import QUANT_MODE_CHOICES
+
+            onnx_quant_mode = gr.Dropdown(
+                label="ONNX quant mode",
+                choices=list(QUANT_MODE_CHOICES),
+                value="int8",
+                info="Khớp với file trong models/onnx/ (xem quantization.json)",
             )
 
         _norm_add_choices = [(label, key) for key, label in NORMALIZE_ADD_CHOICES.items()]
@@ -680,14 +723,14 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                     "1. **Chọn loại chuẩn hóa** → **Thêm vào pipeline** · "
                     "2. Chọn bước trong **Pipeline hiện tại** → **Lên** / **Xuống** / **Xóa** · "
                     "3. **Xem trước chuẩn hóa** và **TTS** dùng cùng pipeline.\n\n"
-                    "Mặc định: **pipeline trống** (chỉ post-process). Preset sách: VieNeu → Cấu trúc TTS → vinorm."
+                    "Mặc định: **pipeline trống** (chỉ post-process). Preset sách: toàn bộ chuẩn hóa (sea-g2p → … → VieNeu)."
                 )
                 norm_pipeline_state = gr.State(value=[])
                 with gr.Row():
                     norm_add_step = gr.Dropdown(
                         label="Chọn loại chuẩn hóa",
                         choices=_norm_add_choices,
-                        value="vinorm",
+                        value="vieneu",
                         scale=3,
                     )
                     norm_add_btn = gr.Button("Thêm vào pipeline", size="sm", scale=1)
@@ -703,6 +746,15 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                     norm_reset_btn = gr.Button("Mặc định", size="sm", min_width=80)
                     norm_audiobook_btn = gr.Button(
                         "Preset: Sách/Audiobook", size="sm", min_width=140
+                    )
+                    pipeline_quick_save_name = gr.Textbox(
+                        label="Tên lưu preset",
+                        placeholder="vd: sach_ai_vy",
+                        scale=2,
+                        min_width=120,
+                    )
+                    pipeline_quick_save_btn = gr.Button(
+                        "Lưu preset", size="sm", min_width=90
                     )
                 norm_pipeline_display = gr.Markdown(
                     value=format_normalize_pipeline_list([])
@@ -758,8 +810,9 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         norm_preview = gr.Textbox(
             label="Text đã chuẩn hóa (đầy đủ) — xem trước / sau TTS",
             lines=16,
-            max_lines=40,
+            max_lines=50,
             interactive=False,
+            elem_classes=[TEXTBOX_UNICODE_CLASS],
             placeholder="Cấu hình pipeline → nhập văn bản ô 3 → Xem trước hoặc Xuất .txt",
         )
 
@@ -775,14 +828,18 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
 **Mẹo soạn manuscript (audiobook)**
 
 - Xuống dòng = đoạn mới; dòng `Chương 1` / `Lời nói đầu` / `Phụ lục` → nghỉ chương dài hơn.
-- Pipeline mặc định **trống** — giữ nguyên văn bản, chỉ dọn dấu câu. Dùng **Preset: Sách/Audiobook** khi cần VieNeu + cấu trúc + vinorm.
+- Pipeline mặc định **trống** — giữ nguyên văn bản, chỉ dọn dấu câu. Dùng **Preset: Sách/Audiobook** khi cần pipeline đầy đủ (sea-g2p → … → VieNeu).
 - **Xem trước chuẩn hóa** để QC ranh giới chunk; checkpoint tại `output/.checkpoints/latest/` để resume.
 
 **Cấu trúc:** `models/onnx/` + `models/vocoder/` · Nghỉ mặc định: 0.35s/câu, 0.65s/đoạn, 2.0s/chương, 0.28s/cắt phẩy.
             """
         )
 
-        gen_txt_file.change(_on_gen_txt_upload, inputs=[gen_txt_file], outputs=[gen_text])
+        gen_txt_file.change(
+            _on_gen_txt_upload,
+            inputs=[gen_txt_file],
+            outputs=[gen_text, gen_txt_source_path],
+        )
         refresh_btn.click(_refresh_voices, outputs=[voice_dropdown, asset_info])
         voice_dropdown.change(
             _on_voice_pick,
@@ -816,6 +873,30 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         )
         norm_reset_btn.click(_on_pipeline_reset, outputs=_pipeline_outputs)
         norm_audiobook_btn.click(_on_pipeline_audiobook_preset, outputs=_pipeline_outputs)
+        pipeline_quick_save_btn.click(
+            _on_save_preset,
+            inputs=[
+                pipeline_quick_save_name,
+                voice_dropdown,
+                ref_audio,
+                ref_text,
+                norm_pipeline_state,
+                chunk_max_chars,
+                pause_sentence,
+                pause_paragraph,
+                pause_chapter,
+                pause_enum_item,
+                pause_forced,
+                speed,
+                export_format,
+                onnx_quant_mode,
+                synth_num_step,
+                synth_guidance_scale,
+                synth_t_shift,
+                input_mode,
+            ],
+            outputs=[preset_dropdown, preset_status],
+        )
         preset_load_btn.click(
             _on_load_preset,
             inputs=[preset_dropdown],
@@ -835,7 +916,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 pause_forced,
                 speed,
                 export_format,
-                use_int8,
+                onnx_quant_mode,
                 synth_num_step,
                 synth_guidance_scale,
                 synth_t_shift,
@@ -859,7 +940,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 pause_forced,
                 speed,
                 export_format,
-                use_int8,
+                onnx_quant_mode,
                 synth_num_step,
                 synth_guidance_scale,
                 synth_t_shift,
@@ -869,13 +950,20 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         )
         preview_norm_btn.click(
             preview_normalize,
-            inputs=[gen_text, norm_pipeline_state, chunk_max_chars, input_mode],
+            inputs=[
+                gen_text,
+                gen_txt_source_path,
+                norm_pipeline_state,
+                chunk_max_chars,
+                input_mode,
+            ],
             outputs=[norm_preview],
         )
         export_norm_btn.click(
             export_normalized_text,
             inputs=[
                 gen_text,
+                gen_txt_source_path,
                 norm_pipeline_state,
                 input_mode,
                 export_norm_path,
@@ -899,11 +987,12 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 pause_chapter,
                 pause_enum_item,
                 pause_forced,
-                use_int8,
+                onnx_quant_mode,
                 synth_num_step,
                 synth_guidance_scale,
                 synth_t_shift,
                 input_mode,
+                gen_txt_source_path,
             ],
             outputs=[output_file, output_audio, save_status, norm_preview],
             concurrency_limit=1,
@@ -929,4 +1018,5 @@ if __name__ == "__main__":
         show_error=True,
         allowed_paths=[str(ROOT), str(ASSETS_DIR), str(OUTPUT_DIR)],
         theme=gr.themes.Soft(),
+        css=GRADIO_UNICODE_TEXTBOX_CSS,
     )

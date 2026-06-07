@@ -604,8 +604,6 @@ NORMALIZE_BACKENDS: dict[str, str] = {
     "join_soft_breaks": "Gộp xuống dòng PDF (dòng ngắn, viết thường)",
     "newline_sentence": "Xuống dòng → ranh giới câu (thêm chấm)",
     "period_break": "Cấu trúc TTS (ngoặc→phẩy, số+chấm→xuống dòng)",
-    "vinorm": "vinorm (TTSnorm)",
-    "vietnormalizer": "vietnormalizer",
     "sea_g2p": "sea-g2p Normalizer",
 }
 
@@ -616,8 +614,6 @@ NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "join_soft_breaks": NORMALIZE_BACKENDS["join_soft_breaks"],
     "newline_sentence": NORMALIZE_BACKENDS["newline_sentence"],
     "period_break": NORMALIZE_BACKENDS["period_break"],
-    "vinorm": NORMALIZE_BACKENDS["vinorm"],
-    "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
     "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
 }
 
@@ -632,12 +628,21 @@ AUDIOBOOK_PRESET_PIPELINE: list[str] = list(reversed(list(NORMALIZE_ADD_CHOICES)
 CHECKPOINT_SUBDIR = "latest"
 
 _sea_g2p_normalizer = None
-_vietnamese_normalizer = None
 
 
 def _strip_sea_g2p_en_tags(text: str) -> str:
     """sea-g2p bọc tiếng Anh bằng <en>; espeak ZipVoice không hiểu tag này."""
     return re.sub(r"</?en>", "", text)
+
+
+def _normalize_per_line(text: str, normalize_fn) -> str:
+    """Run NSW normalizer per line so user paragraph breaks (\\n) survive."""
+    if not text or "\n" not in text:
+        return normalize_fn(text)
+    out: list[str] = []
+    for line in text.split("\n"):
+        out.append(normalize_fn(line) if line.strip() else "")
+    return "\n".join(out)
 
 
 def _normalize_vieneu(text: str) -> str:
@@ -664,36 +669,25 @@ def _normalize_join_soft_breaks(text: str) -> str:
     return join_soft_breaks(text)
 
 
-def _normalize_vinorm(text: str) -> str:
-    from vinorm import TTSnorm
-
-    return TTSnorm(text)
-
-
-def _normalize_vietnormalizer(text: str) -> str:
-    global _vietnamese_normalizer
-    if _vietnamese_normalizer is None:
-        from vietnormalizer import VietnameseNormalizer
-
-        _vietnamese_normalizer = VietnameseNormalizer()
-    return _vietnamese_normalizer.normalize(text)
-
-
 def _normalize_sea_g2p(text: str) -> str:
     global _sea_g2p_normalizer
     if _sea_g2p_normalizer is None:
         from sea_g2p import Normalizer
 
         _sea_g2p_normalizer = Normalizer()
-    out = _sea_g2p_normalizer.normalize(text)
-    if isinstance(out, list):
-        out = out[0] if out else text
-    return _strip_sea_g2p_en_tags(str(out))
+
+    def _run(line: str) -> str:
+        out = _sea_g2p_normalizer.normalize(line)
+        if isinstance(out, list):
+            out = out[0] if out else line
+        return _strip_sea_g2p_en_tags(str(out))
+
+    return _normalize_per_line(text, _run)
 
 
-def normalize_text(text: str, backend: str = "vinorm") -> str:
+def normalize_text(text: str, backend: str = "none") -> str:
     """Chuẩn hóa NSW (số, ngày, ký hiệu...) trước khi đưa vào EspeakTokenizer."""
-    key = (backend or "vinorm").strip().lower()
+    key = (backend or "none").strip().lower()
     if key in ("none", "off", "không"):
         return text
     try:
@@ -705,18 +699,12 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
             return _normalize_newline_sentence(text)
         if key == "join_soft_breaks":
             return _normalize_join_soft_breaks(text)
-        if key == "vinorm":
-            return _normalize_vinorm(text)
-        if key == "vietnormalizer":
-            return _normalize_vietnormalizer(text)
         if key == "sea_g2p":
             return _normalize_sea_g2p(text)
         logger.warning("Unknown normalize backend %r — skip", backend)
         return text
     except ImportError as exc:
         pkg = {
-            "vinorm": "vinorm",
-            "vietnormalizer": "vietnormalizer",
             "sea_g2p": "sea-g2p",
         }.get(key, key)
         raise ImportError(
@@ -897,14 +885,6 @@ def preview_normalize_output(
     return "\n".join(lines)
 
 
-def vinorm_available() -> bool:
-    try:
-        import vinorm  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def compute_tts_checkpoint_key(
     gen_text: str,
     norm_pipeline: list[str],
@@ -1012,7 +992,7 @@ def load_tts_checkpoint_chunks(
     return loaded, resume_from
 
 
-def prepare_tts_text(text: str, backend: str | list[str] = "vinorm") -> str:
+def prepare_tts_text(text: str, backend: str | list[str] = "none") -> str:
     if isinstance(backend, list):
         normalized = (
             normalize_text_pipeline(text, backend) if backend else text
@@ -1023,6 +1003,6 @@ def prepare_tts_text(text: str, backend: str | list[str] = "vinorm") -> str:
 
 
 def normalize_vietnamese(text: str) -> str:
-    """Giữ tương thích code cũ — mặc định vinorm."""
-    return normalize_text(text, "vinorm")
+    """Giữ tương thích code cũ — mặc định sea-g2p Normalizer."""
+    return normalize_text(text, "sea_g2p")
 

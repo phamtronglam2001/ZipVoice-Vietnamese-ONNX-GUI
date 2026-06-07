@@ -23,8 +23,9 @@ from config import (
     apply_cpu_env,
     is_force_cpu,
     onnx_files,
-    use_onnx_int8,
+    onnx_quant_mode,
 )
+from onnx_quant import QuantComponent, format_sizes
 from espeak_tokenizer import EspeakTokenizer
 from vocos_fbank import VocosFbank
 from vocos_istft import vocos_istft
@@ -212,9 +213,20 @@ def _vocos_decode(vocoder: ort.InferenceSession, mel_bct: np.ndarray) -> np.ndar
 class OnnxTTSEngine:
     _instance: Optional["OnnxTTSEngine"] = None
 
-    def __init__(self, use_int8: bool | None = None) -> None:
-        self.use_int8 = use_onnx_int8() if use_int8 is None else use_int8
-        te_name, fm_name = onnx_files(self.use_int8)
+    def __init__(
+        self,
+        quant_mode: str | None = None,
+        *,
+        use_int8: bool | None = None,
+        mixed_config: dict[str, QuantComponent] | None = None,
+    ) -> None:
+        self.quant_mode = onnx_quant_mode() if quant_mode is None else quant_mode
+        if use_int8 is not None and quant_mode is None:
+            from onnx_quant import normalize_quant_mode
+
+            self.quant_mode = normalize_quant_mode(None, use_int8=use_int8)
+        self.mixed_config = mixed_config
+        te_name, fm_name = onnx_files(self.quant_mode, use_int8=use_int8, mixed_config=mixed_config)
         num_thread = int(os.environ.get("ZIPVOICE_ONNX_THREADS", "1"))
 
         with open(ONNX_MODEL_JSON, encoding="utf-8") as f:
@@ -229,20 +241,47 @@ class OnnxTTSEngine:
         )
         self.vocoder = _load_vocoder()
         self.sampling_rate = model_config["feature"]["sampling_rate"]
+        size_note = format_sizes(ONNX_DIR, (te_name, fm_name))
         logger.info(
-            "OnnxTTSEngine ready | int8=%s | onnx+numpy | vocoder=onnx+librosa",
-            self.use_int8,
+            "OnnxTTSEngine ready | mode=%s | %s | vocoder=onnx+librosa",
+            self.quant_mode,
+            size_note,
         )
 
+    @property
+    def use_int8(self) -> bool:
+        """Backward-compatible alias."""
+        return self.quant_mode == "int8"
+
     @classmethod
-    def get(cls, use_int8: bool | None = None) -> "OnnxTTSEngine":
-        want_int8 = use_onnx_int8() if use_int8 is None else use_int8
-        if cls._instance is None or cls._instance.use_int8 != want_int8:
+    def get(
+        cls,
+        quant_mode: str | None = None,
+        *,
+        use_int8: bool | None = None,
+        mixed_config: dict[str, QuantComponent] | None = None,
+    ) -> "OnnxTTSEngine":
+        from onnx_quant import normalize_quant_mode
+
+        want_mode = onnx_quant_mode() if quant_mode is None else quant_mode
+        if use_int8 is not None and quant_mode is None:
+            want_mode = normalize_quant_mode(None, use_int8=use_int8)
+
+        cache_key = (want_mode, tuple(sorted((mixed_config or {}).items())))
+        if (
+            cls._instance is None
+            or cls._instance.quant_mode != want_mode
+            or tuple(sorted((cls._instance.mixed_config or {}).items())) != cache_key[1]
+        ):
             print(
-                f"[ZipVoice ONNX] Loading (int8={want_int8}) — "
+                f"[ZipVoice ONNX] Loading (mode={want_mode}) — "
                 "ZipVoice=ONNX, vocoder=ONNX Vocos + librosa ISTFT..."
             )
-            cls._instance = cls(use_int8=want_int8)
+            cls._instance = cls(
+                quant_mode=want_mode,
+                use_int8=use_int8,
+                mixed_config=mixed_config,
+            )
             print("[ZipVoice ONNX] Ready.")
         return cls._instance
 

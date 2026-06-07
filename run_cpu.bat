@@ -1,17 +1,6 @@
 @echo off
-title ZipVoice ONNX TTS
-setlocal
-cd /d "%~dp0"
 
-set ZIPVOICE_FORCE_CPU=1
-set CUDA_VISIBLE_DEVICES=
+REM Alias cu — dung run_gui.bat (khoi dong Gradio GUI)
 
-if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] Run install_cpu.bat first.
-    pause
-    exit /b 1
-)
+call "%~dp0run_gui.bat" %*
 
-echo Starting ZipVoice ONNX GUI on http://127.0.0.1:7862
-".venv\Scripts\python.exe" app.py
-if errorlevel 1 pause

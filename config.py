@@ -58,27 +58,90 @@ def set_offline_env() -> None:
 
 
 def use_onnx_int8() -> bool:
+    """Legacy env: ZIPVOICE_ONNX_INT8=1 → int8 mode."""
     return os.environ.get("ZIPVOICE_ONNX_INT8", "1").strip() in {"1", "true", "yes"}
 
 
-def onnx_files(use_int8: bool | None = None) -> tuple[str, str]:
-    int8 = use_onnx_int8() if use_int8 is None else use_int8
-    if int8:
-        return "text_encoder_int8.onnx", "fm_decoder_int8.onnx"
-    return "text_encoder.onnx", "fm_decoder.onnx"
+def onnx_quant_mode() -> str:
+    """
+    Quant mode for inference.
+    ZIPVOICE_ONNX_QUANT=fp32|fp16|int8|int4|mixed overrides ZIPVOICE_ONNX_INT8.
+    Falls back to quantization.json in models/onnx/ when unset.
+    """
+    from onnx_quant import normalize_quant_mode, read_quant_manifest
+
+    env_quant = os.environ.get("ZIPVOICE_ONNX_QUANT", "").strip().lower()
+    if env_quant:
+        return normalize_quant_mode(env_quant, use_int8=None)
+
+    manifest = read_quant_manifest(ONNX_DIR)
+    if manifest and manifest.get("mode"):
+        return str(manifest["mode"])
+
+    return normalize_quant_mode(None, use_int8=use_onnx_int8())
 
 
-def onnx_ready(use_int8: bool | None = None) -> bool:
-    te, fm = onnx_files(use_int8)
-    return all(
-        (ONNX_DIR / name).is_file()
-        for name in (te, fm, "model.json", "tokens.txt")
+def onnx_files(
+    quant_mode: str | None = None,
+    *,
+    use_int8: bool | None = None,
+    mixed_config: dict | None = None,
+) -> tuple[str, str]:
+    from onnx_quant import DEFAULT_MIXED_CONFIG, onnx_filenames, normalize_quant_mode, read_quant_manifest
+
+    if quant_mode is None and mixed_config is None:
+        manifest = read_quant_manifest(ONNX_DIR)
+        if manifest and manifest.get("mode") == "mixed":
+            mixed_config = {
+                "text_encoder": manifest.get("text_encoder", "int8"),
+                "fm_decoder": manifest.get("fm_decoder", "fp32"),
+            }
+            quant_mode = "mixed"
+
+    mode = normalize_quant_mode(
+        quant_mode or onnx_quant_mode(),
+        use_int8=use_int8,
     )
+    mixed = mixed_config if mode == "mixed" else None
+    if mode == "mixed" and mixed is None:
+        mixed = DEFAULT_MIXED_CONFIG
+    return onnx_filenames(mode, mixed)
+
+
+def onnx_ready(
+    quant_mode: str | None = None,
+    *,
+    use_int8: bool | None = None,
+    mixed_config: dict | None = None,
+) -> bool:
+    from onnx_quant import DEFAULT_MIXED_CONFIG, normalize_quant_mode, onnx_ready_for_mode, read_quant_manifest
+
+    if quant_mode is None and mixed_config is None:
+        manifest = read_quant_manifest(ONNX_DIR)
+        if manifest and manifest.get("mode") == "mixed":
+            mixed_config = {
+                "text_encoder": manifest.get("text_encoder", "int8"),
+                "fm_decoder": manifest.get("fm_decoder", "fp32"),
+            }
+            quant_mode = "mixed"
+
+    mode = normalize_quant_mode(
+        quant_mode or onnx_quant_mode(),
+        use_int8=use_int8,
+    )
+    mixed = mixed_config if mode == "mixed" else None
+    if mode == "mixed" and mixed is None:
+        mixed = DEFAULT_MIXED_CONFIG
+    return onnx_ready_for_mode(ONNX_DIR, mode, mixed)
 
 
 def vocoder_ready() -> bool:
     return VOCODER_ONNX.is_file()
 
 
-def models_ready(use_int8: bool | None = None) -> bool:
-    return onnx_ready(use_int8) and vocoder_ready()
+def models_ready(
+    quant_mode: str | None = None,
+    *,
+    use_int8: bool | None = None,
+) -> bool:
+    return onnx_ready(quant_mode, use_int8=use_int8) and vocoder_ready()

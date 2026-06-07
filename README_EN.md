@@ -71,8 +71,6 @@ Architecture [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) (Siuzdak et a
 |---------|-----------------|----------------|
 | **VieNeu** | [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) — `vieneu_utils/core_utils.py` | `vieneu_text.py` (built-in) |
 | **TTS structure** | Original to this repo (Pham Trong Lam) | `period_linebreak.py` (built-in) |
-| **vinorm** | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) | `pip install vinorm` |
-| **vietnormalizer** | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) | `pip install vietnormalizer` |
 | **sea-g2p Normalizer** | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | `pip install sea-g2p` — Normalizer only |
 
 **Long-text chunking** (`utils.py`): inspired by [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS), reimplemented for ZipVoice.
@@ -107,7 +105,7 @@ cd ZipVoice-Vietnamese-ONNX-GUI
 git lfs install
 git lfs pull
 install_cpu.bat
-run_cpu.bat
+run_gui.bat
 ```
 
 Open http://127.0.0.1:7862
@@ -137,7 +135,7 @@ JSON **schema v1** stores voice, normalization pipeline, chunk size, pauses, ONN
 | Default file | Description |
 |--------------|-------------|
 | `profiles/none.json` | Empty pipeline, manual voice upload |
-| `profiles/sach.json` | VieNeu → TTS structure → vinorm, voice **Ái Vy** |
+| `profiles/sach.json` | Full pipeline (sea-g2p → … → VieNeu), voice **Ái Vy** |
 
 ### GUI
 
@@ -174,8 +172,6 @@ Add, remove, and reorder steps on the GUI. **Each step receives the previous ste
 | **Join PDF line breaks** | No (built-in) | `join_soft_breaks` — merge short lowercase lines (OCR/PDF wraps) |
 | **Newline → sentence** | No (built-in) | `newline_sentence` — `Chương 1\nNội dung` → `Chương 1.\nNội dung` |
 | **TTS structure** | No (built-in) | `period_break` — brackets→commas; `một. next` → `một.\nnext` |
-| **vinorm** | `pip install vinorm` | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) |
-| **vietnormalizer** | pip | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) |
 | **sea-g2p Normalizer** | pip | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) — Normalizer only |
 | **None** | — | Skip this step |
 
@@ -196,13 +192,15 @@ Supports `()`, `[]`, and `{}`.
 | Content type | Suggested chain |
 |--------------|-----------------|
 | GUI default | *(empty pipeline)* |
-| Audiobook | VieNeu → TTS structure → vinorm (or sea-g2p) |
+| Audiobook | sea-g2p → TTS structure → … → VieNeu |
 | OCR / PDF line wraps | Join PDF → VieNeu → TTS structure |
 | Chapter headings | add **Newline → sentence** before or after TTS structure |
 
 All backends output **plain text**. ZipVoice phonemizes via Espeak separately, so chaining is safe.
 
 Use **Preview normalization** on box 3 to verify output (including embedded `\n` line breaks) before running TTS.
+
+> **Note:** [vinorm](https://github.com/NoahDrisort/vinorm) and [vietnormalizer](https://github.com/nghimestudio/vietnormalizer) were previously supported as optional NSW backends; they are **not bundled**. Use `sea-g2p` instead.
 
 ---
 
@@ -247,6 +245,9 @@ utils.py              # Pipeline + long-text chunking
 | File | Contents |
 |------|----------|
 | `install_cpu.bat` | uv venv + pip deps + verify bundled models |
+| `run_gui.bat` | Start Gradio GUI (http://127.0.0.1:7862) |
+| `run_cli.bat` | CLI TTS (preset/profile) |
+| `run_cpu.bat` | Legacy alias → `run_gui.bat` |
 | `requirements-cpu.txt` | onnxruntime, gradio, librosa, scipy, … |
 | `requirements-normalize.txt` | optional NSW packages |
 | `download_models.py` | optional vocoder fallback if Git LFS not pulled |
@@ -270,7 +271,7 @@ utils.py              # Pipeline + long-text chunking
 | Symptom | Action |
 |---------|--------|
 | `Models not found` | Run `git lfs pull`, then `install_cpu.bat`; or `python download_models.py` for vocoder only |
-| `vinorm` not installed | `pip install vinorm`, or remove vinorm from pipeline; use VieNeu / TTS structure |
+| Missing sea-g2p | `pip install -r requirements-normalize.txt` |
 | Parenthetical text runs together | Enable **TTS structure** in Step 2 |
 | List item `một.` glued to next line | TTS structure + **Preview normalization** |
 | OOM on long books | Lower **Max chars / chunk** (100–110) |

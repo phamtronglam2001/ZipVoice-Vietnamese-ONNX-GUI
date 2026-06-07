@@ -63,10 +63,9 @@ def _read_input_text(args: argparse.Namespace) -> str:
     if args.text:
         return args.text
     if args.file:
-        p = Path(args.file)
-        if not p.is_file():
-            raise ValueError(f"Input file not found: {args.file}")
-        return p.read_text(encoding="utf-8")
+        from utils import read_text_file
+
+        return read_text_file(args.file)
     raise ValueError("Provide --text or --file")
 
 
@@ -202,10 +201,10 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
         args.profile or DEFAULT_PROFILE,
         len(gen_text),
         tts_input_mode,
-        preset.use_int8,
+        preset.onnx_quant_mode,
     )
 
-    engine = OnnxTTSEngine.get(use_int8=preset.use_int8)
+    engine = OnnxTTSEngine.get(quant_mode=preset.onnx_quant_mode)
     normalized_doc = normalize_full_document(
         gen_text, preset.pipeline, tts_input_mode
     )

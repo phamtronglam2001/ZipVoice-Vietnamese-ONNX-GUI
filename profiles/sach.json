@@ -11,7 +11,7 @@
     "ref_wav": "",
     "ref_text": ""
   },
-  "pipeline": ["sea_g2p", "vietnormalizer", "vinorm", "period_break", "newline_sentence", "join_soft_breaks", "vieneu"],
+  "pipeline": ["sea_g2p", "period_break", "newline_sentence", "join_soft_breaks", "vieneu"],
   "chunk_max_chars": 135,
   "pause": {
     "sentence": 0.35,

@@ -35,8 +35,6 @@ VALID_PIPELINE_STEPS = frozenset(
         "join_soft_breaks",
         "newline_sentence",
         "period_break",
-        "vinorm",
-        "vietnormalizer",
         "sea_g2p",
     }
 )
@@ -58,7 +56,7 @@ class PresetConfig:
     pause_chapter: float = PAUSE_CHAPTER_DEFAULT
     pause_enum_item: float = PAUSE_ENUM_DEFAULT
     pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT
-    use_int8: bool = True
+    onnx_quant_mode: str = "int8"
     num_step: int = 16
     speed: float = 1.0
     guidance_scale: float = 1.0
@@ -142,6 +140,15 @@ def validate_preset(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _resolve_preset_quant_mode(synth: dict[str, Any]) -> str:
+    from onnx_quant import QUANT_MODE_CHOICES, normalize_quant_mode
+
+    raw = synth.get("onnx_quant_mode")
+    if raw and str(raw).strip().lower() in QUANT_MODE_CHOICES:
+        return str(raw).strip().lower()
+    return normalize_quant_mode(None, use_int8=bool(synth.get("use_int8", True)))
+
+
 def _preset_from_dict(data: dict[str, Any]) -> PresetConfig:
     errors = validate_preset(data)
     if errors:
@@ -186,7 +193,7 @@ def _preset_from_dict(data: dict[str, Any]) -> PresetConfig:
         pause_chapter=float(pause.get("chapter", PAUSE_CHAPTER_DEFAULT)),
         pause_enum_item=float(pause.get("enum_item", PAUSE_ENUM_DEFAULT)),
         pause_forced_split=float(pause.get("forced_split", PAUSE_FORCED_SPLIT_DEFAULT)),
-        use_int8=bool(synth.get("use_int8", True)),
+        onnx_quant_mode=_resolve_preset_quant_mode(synth),
         num_step=int(synth.get("num_step", 16)),
         speed=float(synth.get("speed", 1.0)),
         guidance_scale=float(synth.get("guidance_scale", 1.0)),
@@ -224,7 +231,8 @@ def preset_to_dict(preset: PresetConfig) -> dict[str, Any]:
             "forced_split": preset.pause_forced_split,
         },
         "synthesis": {
-            "use_int8": preset.use_int8,
+            "onnx_quant_mode": preset.onnx_quant_mode,
+            "use_int8": preset.onnx_quant_mode == "int8",
             "num_step": preset.num_step,
             "speed": preset.speed,
             "guidance_scale": preset.guidance_scale,
@@ -291,7 +299,7 @@ def preset_from_gui_state(
     pause_forced: float,
     speed: float,
     export_format: str,
-    use_int8: bool = True,
+    onnx_quant_mode: str = "int8",
     num_step: int = 16,
     guidance_scale: float = 1.0,
     t_shift: float = 0.5,
@@ -313,7 +321,7 @@ def preset_from_gui_state(
         pause_forced=pause_forced,
         speed=speed,
         export_format=export_format,
-        use_int8=use_int8,
+        onnx_quant_mode=onnx_quant_mode,
         num_step=num_step,
         guidance_scale=guidance_scale,
         t_shift=t_shift,
@@ -337,7 +345,7 @@ def collect_gui_state(
     pause_forced: float,
     speed: float,
     export_format: str,
-    use_int8: bool = True,
+    onnx_quant_mode: str = "int8",
     num_step: int = 16,
     guidance_scale: float = 1.0,
     t_shift: float = 0.5,
@@ -364,7 +372,7 @@ def collect_gui_state(
             pause_chapter=float(pause_chapter),
             pause_enum_item=float(pause_enum_item),
             pause_forced_split=float(pause_forced),
-            use_int8=use_int8,
+            onnx_quant_mode=str(onnx_quant_mode),
             num_step=int(num_step),
             speed=float(speed),
             guidance_scale=float(guidance_scale),
@@ -387,7 +395,7 @@ def collect_gui_state(
         pause_chapter=float(pause_chapter),
         pause_enum_item=float(pause_enum_item),
         pause_forced_split=float(pause_forced),
-        use_int8=use_int8,
+        onnx_quant_mode=str(onnx_quant_mode),
         num_step=int(num_step),
         speed=float(speed),
         guidance_scale=float(guidance_scale),
@@ -436,7 +444,7 @@ def apply_preset_to_gui(preset: PresetConfig) -> dict[str, Any]:
         "pause_forced": gr.update(value=float(preset.pause_forced_split)),
         "speed": gr.update(value=float(preset.speed)),
         "export_format": gr.update(value=export_val),
-        "use_int8": gr.update(value=bool(preset.use_int8)),
+        "onnx_quant_mode": gr.update(value=str(preset.onnx_quant_mode)),
         "synth_num_step": int(preset.num_step),
         "synth_guidance_scale": float(preset.guidance_scale),
         "synth_t_shift": float(preset.t_shift),

@@ -73,11 +73,11 @@ Kiến trúc [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) (Siuzdak et a
 | **Cấu trúc TTS** | Viết trong repo này (Pham Trong Lam) | `period_linebreak.py` (built-in) |
 | **Xuống dòng → câu** | Viết trong repo này | `period_linebreak.py` (`newline_sentence`) |
 | **Gộp xuống dòng PDF** | Viết trong repo này | `period_linebreak.py` (`join_soft_breaks`) |
-| **vinorm** | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) | `pip install vinorm` |
-| **vietnormalizer** | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) | `pip install vietnormalizer` |
 | **sea-g2p Normalizer** | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | `pip install sea-g2p` — chỉ Normalizer |
 
 **Chunk sách dài** (`utils.py`): lấy cảm hứng từ [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS), triển khai riêng.
+
+> **Lưu ý:** [vinorm](https://github.com/NoahDrisort/vinorm) và [vietnormalizer](https://github.com/nghimestudio/vietnormalizer) từng được hỗ trợ như backend NSW tùy chọn; hiện **không cài kèm**. Dùng `sea-g2p` thay thế.
 
 ### UI
 
@@ -109,7 +109,7 @@ cd ZipVoice-Vietnamese-ONNX-GUI
 git lfs install
 git lfs pull
 install_cpu.bat
-run_cpu.bat
+run_gui.bat
 ```
 
 Mở http://127.0.0.1:7862 — **không gọi PowerShell**.
@@ -123,7 +123,7 @@ Nếu thiếu `models/vocoder/mel_spec_24khz.onnx` sau clone, chạy `python dow
 - **9 giọng mẫu** trong `assets/ref_audio/` + `ref_info.json`
 - Upload giọng mẫu + **transcript bắt buộc** (không ASR)
 - Upload `.txt` / `.md` cho **sách dài**
-- **Pipeline chuẩn hóa** danh sách tùy chỉnh (mặc định trống; preset Sách gợi ý VieNeu → Cấu trúc → vinorm)
+- **Pipeline chuẩn hóa** danh sách tùy chỉnh (mặc định trống; preset Sách gợi ý pipeline đầy đủ sea-g2p → … → VieNeu)
 - **Xem trước chuẩn hóa** — nút riêng, không load model TTS
 - **Chia chunk** đoạn → câu → max ký tự; nghỉ theo câu / đoạn / chương / mục đánh số
 - Xuất WAV / MP3 → `output/`
@@ -139,7 +139,7 @@ Preset JSON **schema v1** gom mọi thiết lập audiobook: giọng, pipeline c
 | File mặc định | Mô tả |
 |---------------|--------|
 | `profiles/none.json` | Pipeline trống, giọng upload thủ công |
-| `profiles/sach.json` | VieNeu → Cấu trúc TTS → vinorm, giọng **Ái Vy** |
+| `profiles/sach.json` | Pipeline đầy đủ (sea-g2p → … → VieNeu), giọng **Ái Vy** |
 
 ### GUI
 
@@ -173,7 +173,7 @@ Ví dụ schema rút gọn:
   "name": "Sách — Ái Vy",
   "voice": { "mode": "bundled", "voice_id": "ai_vy" },
   "voice_manual": { "mode": "manual", "ref_wav": "", "ref_text": "" },
-  "pipeline": ["vieneu", "period_break", "vinorm"],
+  "pipeline": ["sea_g2p", "period_break", "newline_sentence", "join_soft_breaks", "vieneu"],
   "chunk_max_chars": 135,
   "pause": { "sentence": 0.35, "paragraph": 0.65, "chapter": 2.0, "enum_item": 1.0, "forced_split": 0.28 },
   "synthesis": { "use_int8": true, "num_step": 16, "speed": 1.0, "guidance_scale": 1.0, "t_shift": 0.5 },
@@ -225,8 +225,6 @@ Thêm/xóa/sắp xếp bước trên GUI — **mỗi bước nhận output của
 | **Gộp xuống dòng PDF** | Không (built-in) | `join_soft_breaks` — gộp dòng ngắn viết thường (OCR/PDF) |
 | **Xuống dòng → câu** | Không (built-in) | `newline_sentence` — `Chương 1\nNội dung` → `Chương 1.\nNội dung` |
 | **Cấu trúc TTS** | Không (built-in) | `period_break` — ngoặc→phẩy; `một. đoạn` → `một.\nđoạn` |
-| **vinorm** | `pip install vinorm` | [NoahDrisort/vinorm](https://github.com/NoahDrisort/vinorm) |
-| **vietnormalizer** | pip | [nghimestudio/vietnormalizer](https://github.com/nghimestudio/vietnormalizer) |
 | **sea-g2p Normalizer** | pip | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) — chỉ Normalizer |
 | **Không** | — | Bỏ qua bước đó |
 
@@ -245,7 +243,7 @@ Thêm/xóa/sắp xếp bước trên GUI — **mỗi bước nhận output của
 | Loại văn bản | Gợi ý |
 |--------------|-------|
 | Mặc định GUI | *(pipeline trống)* |
-| Sách / audiobook | VieNeu → Cấu trúc TTS → vinorm (hoặc sea-g2p) |
+| Sách / audiobook | sea-g2p → Cấu trúc TTS → … → VieNeu |
 | OCR / PDF ngắt dòng | Gộp PDF → VieNeu → Cấu trúc TTS |
 | Tiêu đề chương | thêm **Xuống dòng → câu** trước hoặc sau Cấu trúc TTS |
 
@@ -286,6 +284,8 @@ profiles/             # Preset JSON (none, sach, …)
 preset_io.py          # Load/save preset, GUI ↔ JSON
 cli_tts.py            # CLI profile-driven
 run_cli.bat           # Chạy CLI
+run_gui.bat           # Chạy Gradio GUI (port 7862)
+run_cpu.bat           # Alias cũ → run_gui.bat
 app.py                # Gradio GUI
 onnx_engine.py        # ONNX + Vocos inference
 utils.py              # Pipeline normalize + chunk sách dài
@@ -298,8 +298,11 @@ utils.py              # Pipeline normalize + chunk sách dài
 | File | Nội dung |
 |------|----------|
 | `install_cpu.bat` | uv venv + pip deps + kiểm tra models có sẵn |
+| `run_gui.bat` | Khởi động Gradio GUI (http://127.0.0.1:7862) |
+| `run_cli.bat` | CLI TTS (preset/profile) |
+| `run_cpu.bat` | Alias cũ → `run_gui.bat` |
 | `requirements-cpu.txt` | onnxruntime, gradio, librosa, scipy, … |
-| `requirements-normalize.txt` | vinorm, sea-g2p (tùy chọn) |
+| `requirements-normalize.txt` | sea-g2p (tùy chọn) |
 | `download_models.py` | fallback vocoder nếu chưa `git lfs pull` |
 
 **Đã bỏ:** PyTorch/torchaudio, `vocos` pip package, clone `vendor/ZipVoice`, `lhotse`, `jieba`, `matplotlib`, …
@@ -321,7 +324,7 @@ utils.py              # Pipeline normalize + chunk sách dài
 | Vấn đề | Cách xử lý |
 |--------|------------|
 | `Models not found` | `git lfs pull` rồi `install_cpu.bat`; hoặc `python download_models.py` (vocoder) |
-| `Chưa cài vinorm` | `pip install vinorm` hoặc bỏ vinorm khỏi pipeline; dùng VieNeu / Cấu trúc TTS |
+| Thiếu sea-g2p | `pip install -r requirements-normalize.txt` |
 | Đọc liền trong ngoặc | Bật **Cấu trúc TTS** ở Bước 2 |
 | Mục `một.` dính đoạn sau | Cấu trúc TTS + xem **Xem trước chuẩn hóa** |
 | OOM sách dài | Giảm **Max ký tự/chunk** (100–110) |
