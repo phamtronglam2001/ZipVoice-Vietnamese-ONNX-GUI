@@ -8,15 +8,18 @@ ONNX weights are exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingf
 
 English | [Tiếng Việt](README.md)
 
+**Full PyTorch GUI:** [ZipVoice-Vietnamese-GUI](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-GUI)
+
 ---
 
-## Comparison with the full PyTorch GUI
+## Comparison with the PyTorch GUI
 
 | | [ZipVoice-Vietnamese-GUI](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-GUI) | This repository |
 |---|---|---|
-| Inference backend | PyTorch checkpoint | ONNX (INT8 by default) |
-| First-time download | ~2 GB (model + vocoder) | ~50 MB (vocoder only) |
-| ONNX weights in repo | No | Yes (`models/onnx/`) |
+| Inference | PyTorch checkpoint | ONNX (INT8 default) |
+| First-time download | ~2 GB | ~50 MB (vocoder only) |
+| ONNX in repo | No | Yes (`models/onnx/`, Git LFS) |
+| `vendor/ZipVoice` clone | Yes | **No** |
 | Default port | 7860 | 7862 |
 
 ---
@@ -30,120 +33,101 @@ run_cpu.bat
 
 Open http://127.0.0.1:7862
 
-The installer creates a virtual environment, installs CPU PyTorch and ONNX Runtime, and downloads the Vocos vocoder plus the ZipVoice tokenizer runtime. ONNX model files are already included in the repository.
-
 ---
 
 ## Features
 
-### Voice cloning (zero-shot)
+- Nine bundled reference voices (`assets/ref_audio/`, `ref_info.json`)
+- Manual reference upload; **transcript required** (no ASR)
+- `.txt` / `.md` upload for long-form text
+- **Three-step normalization pipeline** (see table below)
+- **Preview normalization** before synthesis (no model load)
+- Smart chunking with pauses for sentences, paragraphs, chapters, and numbered list items
+- WAV / MP3 export to `output/`
+- ONNX **INT8** (default) or FP32
 
-- Nine bundled reference voices in `assets/ref_audio/` with transcripts in `ref_info.json`
-- Manual reference upload (3–15 seconds of clean speech)
-- **Transcript is required** — the app does not run automatic speech recognition
+---
 
-### Long-form text and audiobooks
+## Normalization pipeline (Steps 1 → 2 → 3)
 
-- Upload `.txt` or `.md` files for book-length input
-- Intelligent chunking: paragraph → sentence → clause, respecting `max chars / chunk`
-- Natural pauses between chunks: **0.35 s** (sentence), **0.65 s** (paragraph), **1.2 s** (chapter heading)
-- Export to WAV or MP3 (32 kbps / 128 kbps, 24 kHz) under `output/`
+Up to **three steps** in order. Duplicate backends are rejected.
 
-### Text normalization pipeline
+| Backend | pip required? | Role |
+|---------|---------------|------|
+| **VieNeu** | No (built-in) | Punctuation / noise cleanup from VieNeu-TTS `core_utils` |
+| **TTS structure** | No (built-in) | Parentheses → commas; numbered items → line break + ~1 s pause |
+| **vinorm** | `pip install vinorm` | NSW normalization — **not bundled in ZipVoice** |
+| **vietnormalizer** | pip | Broader Vietnamese cleanup |
+| **sea-g2p Normalizer** | pip | Rich NSW rules (**Normalizer only**, no G2P) |
+| **None** | — | Skip this step |
 
-Vietnamese TTS benefits from normalizing non-standard words (numbers, dates, symbols, abbreviations) before phonemization. This project supports **chaining up to three normalizers** in a user-defined order:
+### TTS structure (`period_linebreak.py`)
 
-| Step | Library | Role |
-|------|---------|------|
-| 1–3 (optional chain) | **VieNeu** (built-in) | Punctuation / spacing cleanup from VieNeu-TTS `core_utils` |
-| | **vinorm** (TTSnorm) | NSW normalization — **separate PyPI package**, not bundled in ZipVoice |
-| | **vietnormalizer** | Broader Vietnamese text cleanup |
-| | **sea-g2p Normalizer** | Rich NSW rules (same as VieNeu-TTS; G2P **not** used here) |
+| Rule | Input example | After processing |
+|------|---------------|------------------|
+| Brackets → comma (breath pause) | `mẫu (mẹ)` | `mẫu, mẹ` |
+| Number + period → line break | `một. next paragraph` | `một.` + newline + `next paragraph` |
+| Pause after list item | standalone `một.` block | ~**1.0 s** before next block |
 
-**Why chaining is safe here:** all three libraries expose a *text-in, text-out* normalizer. ZipVoice uses Espeak phonemization separately. We never pipe phoneme strings through a second normalizer, so a pipeline such as `vinorm → vietnormalizer → sea-g2p` is valid.
+Supports `()`, `[]`, and `{}`.
 
-Recommended starting points:
+### Suggested pipelines
 
-- General prose: `VieNeu` only (no extra pip packages)
-- Mixed numerals and symbols: `VieNeu → vinorm → sea-g2p`
-- Noisy OCR: `VieNeu → vietnormalizer`
+| Content type | Step 1 | Step 2 | Step 3 |
+|--------------|--------|--------|--------|
+| GUI default | VieNeu | TTS structure | (none) |
+| Numbers / symbols | VieNeu | TTS structure | vinorm or sea-g2p |
+| Noisy OCR | VieNeu | vietnormalizer | TTS structure |
 
-Duplicate steps in the pipeline are rejected by the UI.
+All backends output **plain text**. ZipVoice phonemizes via Espeak separately, so chaining is safe.
 
-Use **Preview normalization** to run the pipeline on box 3 text before synthesis. This step does not load ONNX or vocoder weights.
-
-### ONNX runtime options
-
-- **INT8** (default): smaller memory footprint, faster CPU inference
-- **FP32**: reference quality when INT8 quantization is too aggressive for a passage
+Use **Preview normalization** on box 3 to verify output (including embedded `\n` line breaks) before running TTS.
 
 ---
 
 ## This is not browser-only ONNX
 
-Gradio opens a URL in your browser for the **user interface only**. All inference runs in a **local Python process** on your machine:
-
-- ONNX Runtime executes the text encoder and flow-matching decoder
-- PyTorch runs the Vocos vocoder and lightweight tensor glue code
-- `piper_phonemize` / espeak phonemizes Vietnamese text
-
-This is **not** [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/). You cannot skip installing runtimes and “just open a page” to synthesize speech.
-
-For a future **standalone `.exe`**, the same binaries are bundled inside the executable (PyInstaller/Nuitka, etc.) — the dependency stack below still applies, only the packaging changes.
+Gradio uses the browser for the **UI only**. Inference runs in a **local Python process** (ONNX Runtime + PyTorch vocoder). This is not [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/).
 
 ---
 
-## Minimal dependencies
+## Why PyTorch is still required
 
-| Package | Purpose |
-|---------|---------|
-| `onnxruntime` | ONNX inference (encoder + decoder) |
-| `torch`, `torchaudio` | Vocos vocoder; audio tensors |
-| `vocos` | Mel-spectrogram → waveform |
-| `piper_phonemize` | Espeak Vietnamese phonemization |
-| `gradio` | Desktop-style web GUI |
-| `pydub`, `scipy`, `soundfile` | Reference audio prep; WAV/MP3 export |
-| `vinorm`, `vietnormalizer`, `sea-g2p` | Optional normalization pipeline |
+| Component | Runtime |
+|-----------|---------|
+| Text encoder + flow-matching decoder | **ONNX Runtime** |
+| Vocos vocoder | **PyTorch** |
+| Audio tensors / I/O glue | `torch` / `torchaudio` |
 
-**Removed** (were copied from the full PyTorch project but unused here): `lhotse`, `jieba`, `pypinyin`, `cn2an`, `inflect`, `librosa`, `matplotlib`, `safetensors`, `onnx` (export tool), entire `vendor/ZipVoice` clone.
-
-Built-in modules replace the vendor tree: `espeak_tokenizer.py`, `vocos_fbank.py`.
+The full ZipVoice PyTorch checkpoint (~470 MB) is **not** downloaded.
 
 ---
 
 ## Project layout
 
 ```
-models/onnx/          # Bundled ONNX weights
-models/vocoder/       # Downloaded once by setup
-espeak_tokenizer.py   # Minimal Espeak tokenizer
-vocos_fbank.py        # Prompt mel features (no lhotse)
+models/onnx/          # Bundled ONNX weights (Git LFS)
+models/vocoder/       # Downloaded once (~50 MB)
+espeak_tokenizer.py   # Espeak via piper_phonemize
+vocos_fbank.py        # Prompt mel features
+vieneu_text.py        # VieNeu punctuation cleanup
+period_linebreak.py   # Brackets→commas, list breaks
 app.py                # Gradio GUI
 onnx_engine.py        # ONNX + Vocos inference
-utils.py              # Normalization + long-text chunking
+utils.py              # Pipeline + long-text chunking
 ```
 
 ---
 
-## Why is PyTorch still required?
+## Dependencies
 
-This is intentional, not a packaging mistake.
+**Runtime** (`requirements-cpu.txt` + `setup_cpu.ps1`):
 
-| Component | Runtime |
-|-----------|---------|
-| Text encoder + flow-matching decoder | **ONNX Runtime** (bundled weights) |
-| Vocos vocoder (mel → waveform) | **PyTorch** (upstream ZipVoice ONNX design) |
-| Audio I/O, tensors between ONNX steps | `torch` / `torchaudio` |
+`onnxruntime`, `torch`, `torchaudio`, `vocos`, `piper_phonemize`, `gradio`, `pydub`, `scipy`, `soundfile`, and optionally `vinorm`, `vietnormalizer`, `sea-g2p`.
 
-You do **not** download the full ZipVoice PyTorch checkpoint (~470 MB). Setup only pulls the Vocos vocoder (~50 MB) plus the ZipVoice source tree for the Espeak tokenizer.
+**One-time setup** (`requirements-setup.txt`): `huggingface_hub` for vocoder download.
 
----
-
-## Requirements
-
-- Python 3.10 or newer
-- Internet access **once** during `install_cpu.bat` (vocoder + vendor clone)
-- `piper_phonemize` / espeak (installed automatically by the setup script)
+**Removed:** `vendor/ZipVoice` clone, `lhotse`, `jieba`, `librosa`, `matplotlib`, and other unused packages from the full PyTorch project.
 
 ---
 
@@ -151,17 +135,9 @@ You do **not** download the full ZipVoice PyTorch checkpoint (~470 MB). Setup on
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZIPVOICE_FORCE_CPU` | `1` in `run_cpu.bat` | Force CPU execution |
-| `ZIPVOICE_ONNX_INT8` | `1` | Prefer INT8 ONNX weights at engine load |
-| `GRADIO_SERVER_PORT` | `7862` | Gradio listen port |
-
----
-
-## Model and license notice
-
-- Base model: [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h) (CC-BY-NC-SA-4.0)
-- This GUI and bundled reference audio: Non-Commercial license in `LICENSE`
-- Users are responsible for lawful use of cloned voices and generated speech
+| `ZIPVOICE_FORCE_CPU` | `1` | Force CPU |
+| `ZIPVOICE_ONNX_INT8` | `1` | Use INT8 ONNX weights |
+| `GRADIO_SERVER_PORT` | `7862` | GUI port |
 
 ---
 
@@ -169,9 +145,18 @@ You do **not** download the full ZipVoice PyTorch checkpoint (~470 MB). Setup on
 
 | Symptom | Action |
 |---------|--------|
-| `Models not found` on launch | Run `install_cpu.bat` |
-| Import error for `vinorm` / `sea-g2p` | Re-run setup or `pip install -r requirements-cpu.txt` |
-| Out-of-memory on long books | Lower **Max chars / chunk** (e.g. 100–110) |
-| Slow synthesis | Enable INT8; close other heavy applications |
+| `Models not found` | Run `install_cpu.bat` |
+| `vinorm` not installed | `pip install vinorm`, or remove vinorm from pipeline; use VieNeu / TTS structure |
+| Parenthetical text runs together | Enable **TTS structure** in Step 2 |
+| List item `một.` glued to next line | TTS structure + **Preview normalization** |
+| OOM on long books | Lower **Max chars / chunk** (100–110) |
+| Slow synthesis | Keep INT8 enabled |
 
-Logs are written to `logs/app.log`.
+Logs: `logs/app.log`
+
+---
+
+## License
+
+- Base model [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h): CC-BY-NC-SA-4.0
+- This GUI and bundled voices: Non-Commercial (`LICENSE`)

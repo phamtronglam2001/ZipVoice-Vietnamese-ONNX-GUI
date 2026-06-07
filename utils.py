@@ -115,6 +115,7 @@ def split_text_for_tts(
     pause_sentence: float = 0.35,
     pause_paragraph: float = 0.65,
     pause_chapter: float = 1.2,
+    pause_enum_item: float = 1.0,
     pause_forced_split: float = 0.12,
 ) -> list[TtsChunk]:
     """
@@ -196,7 +197,13 @@ def split_text_for_tts(
             last.pause_after = pause_chapter
         elif not is_last_block:
             last.is_paragraph_end = True
-            last.pause_after = pause_paragraph
+            from period_linebreak import is_enumeration_only_block
+
+            last.pause_after = (
+                pause_enum_item
+                if is_enumeration_only_block(block)
+                else pause_paragraph
+            )
         elif last.is_sentence_end:
             last.pause_after = pause_sentence
 
@@ -362,6 +369,7 @@ def post_process_text(text: str) -> str:
 NORMALIZE_BACKENDS: dict[str, str] = {
     "none": "Không (chỉ dọn dấu câu)",
     "vieneu": "VieNeu (dọn punctuation/noise)",
+    "period_break": "Cấu trúc TTS (ngoặc→phẩy, số+chấm→xuống dòng)",
     "vinorm": "vinorm (TTSnorm)",
     "vietnormalizer": "vietnormalizer",
     "sea_g2p": "sea-g2p Normalizer",
@@ -371,6 +379,7 @@ NORMALIZE_BACKENDS: dict[str, str] = {
 NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "none": "— Không —",
     "vieneu": NORMALIZE_BACKENDS["vieneu"],
+    "period_break": NORMALIZE_BACKENDS["period_break"],
     "vinorm": NORMALIZE_BACKENDS["vinorm"],
     "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
     "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
@@ -389,6 +398,12 @@ def _normalize_vieneu(text: str) -> str:
     from vieneu_text import clean_text_noise
 
     return clean_text_noise(text)
+
+
+def _normalize_period_break(text: str) -> str:
+    from period_linebreak import prepare_tts_structure
+
+    return prepare_tts_structure(text)
 
 
 def _normalize_vinorm(text: str) -> str:
@@ -426,6 +441,8 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
     try:
         if key == "vieneu":
             return _normalize_vieneu(text)
+        if key == "period_break":
+            return _normalize_period_break(text)
         if key == "vinorm":
             return _normalize_vinorm(text)
         if key == "vietnormalizer":

@@ -312,8 +312,8 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             with gr.Column(scale=2):
                 gr.Markdown(
                     "### Chuẩn hóa text (pipeline, tối đa 3 bước)\n"
-                    "Áp dụng lần lượt A → B → C. **VieNeu** = dọn punctuation (built-in). "
-                    "vinorm/sea-g2p/vietnormalizer = NSW (cần pip). Không trùng bước."
+                    "Built-in: **VieNeu**, **Cấu trúc TTS** — `mẫu (mẹ)`→`mẫu, mẹ` (ngắt hơi); "
+                    "`một. đoạn sau`→xuống dòng + nghỉ ~1s. NSW: vinorm/sea-g2p (pip)."
                 )
                 with gr.Row():
                     norm_step1 = gr.Dropdown(
@@ -324,7 +324,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                     norm_step2 = gr.Dropdown(
                         label="Bước 2 (tuỳ chọn)",
                         choices=_norm_choices,
-                        value="none",
+                        value="period_break",
                     )
                     norm_step3 = gr.Dropdown(
                         label="Bước 3 (tuỳ chọn)",
@@ -363,8 +363,8 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
 
         gr.Markdown(
             """
-**Văn bản dài / sách:** upload `.txt` hoặc `.md` → chia theo đoạn (`\\n`) → câu → gộp đến max chunk;
-nghỉ **0.35s/câu**, **0.65s/đoạn**, **1.2s/tiêu đề chương**.
+**Cấu trúc TTS:** ngoặc `()` `[]` `{}` → phẩy · `một.` `2.` → xuống dòng (~1s nghỉ).
+Nghỉ: **0.35s/câu**, **0.65s/đoạn**, **1.2s/chương**.
 
 **Cấu trúc:** `models/onnx/` (đã có sẵn) · `models/vocoder/` (setup tải) · `vendor/ZipVoice` (tokenizer)
             """
