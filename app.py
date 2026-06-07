@@ -41,12 +41,15 @@ if not models_ready():
 
 from onnx_engine import OnnxTTSEngine  # noqa: E402
 from utils import (  # noqa: E402
-    NORMALIZE_BACKENDS,
+    NORMALIZE_STEP_CHOICES,
+    build_normalize_pipeline,
+    format_normalize_pipeline,
     join_tts_audio_chunks,
     prepare_tts_text,
     preprocess_ref_audio_text,
     read_text_file,
     save_spectrogram,
+    preview_normalize_output,
     split_text_for_tts,
 )
 
@@ -86,6 +89,27 @@ def _on_gen_txt_upload(file_path: str | None) -> str:
         raise gr.Error(str(exc)) from exc
 
 
+def preview_normalize(
+    gen_text: str,
+    norm_step1: str,
+    norm_step2: str,
+    norm_step3: str,
+    chunk_max_chars: int,
+) -> str:
+    try:
+        return preview_normalize_output(
+            gen_text,
+            norm_step1,
+            norm_step2,
+            norm_step3,
+            chunk_max_chars=int(chunk_max_chars),
+        )
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    except ImportError as exc:
+        raise gr.Error(str(exc)) from exc
+
+
 def _resolve_ref_path(ref_audio_path: str | None, asset_voice_id: str) -> str | None:
     if ref_audio_path:
         return ref_audio_path
@@ -102,7 +126,9 @@ def infer_tts(
     gen_text: str,
     speed: float,
     export_format: str,
-    normalize_backend: str,
+    norm_step1: str,
+    norm_step2: str,
+    norm_step3: str,
     chunk_max_chars: int,
     use_int8: bool,
     progress=gr.Progress(),
@@ -128,14 +154,20 @@ def infer_tts(
         )
 
     try:
+        try:
+            norm_pipeline = build_normalize_pipeline(norm_step1, norm_step2, norm_step3)
+        except ValueError as exc:
+            raise gr.Error(str(exc)) from exc
+
         voice = get_voice_by_id(asset_voice_id, _voice_cache)
+        norm_label = format_normalize_pipeline(norm_pipeline)
         logger.info(
             "infer_tts | asset=%s | gen_len=%d | ref_len=%d | export=%s | norm=%s | chunk=%d | int8=%s",
             asset_voice_id,
             len(gen_text),
             len(ref_text.strip()),
             export_format,
-            normalize_backend,
+            norm_label,
             chunk_max_chars,
             use_int8,
         )
@@ -162,8 +194,8 @@ def infer_tts(
             else:
                 resolved_ref_text = ref_text.strip() or resolved_ref_text
 
-            prompt_normalized = prepare_tts_text(resolved_ref_text, normalize_backend)
-            normalized = prepare_tts_text(tts_chunk.text, normalize_backend)
+            prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
+            normalized = prepare_tts_text(tts_chunk.text, norm_pipeline)
             if not normalized_preview:
                 normalized_preview = normalized[:500] + (
                     "…" if len(normalized) > 500 else ""
@@ -195,7 +227,6 @@ def infer_tts(
             spec_path = tmp.name
         save_spectrogram(final_wave, spec_path)
 
-        norm_label = NORMALIZE_BACKENDS.get(normalize_backend, normalize_backend)
         est_min = max(1, int(len(tts_chunks) * 5 / 60))
         onnx_mode = "INT8" if use_int8 else "FP32"
         status = (
@@ -282,13 +313,30 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 value=True,
             )
 
+        _norm_choices = [(label, key) for key, label in NORMALIZE_STEP_CHOICES.items()]
         with gr.Row():
-            normalize_backend = gr.Radio(
-                label="Chuẩn hóa text (trước Espeak)",
-                choices=[(label, key) for key, label in NORMALIZE_BACKENDS.items()],
-                value="vinorm",
-                info="vinorm / vietnormalizer / sea-g2p — chuẩn hóa số, ngày, ký hiệu cho sách dài",
-            )
+            with gr.Column(scale=2):
+                gr.Markdown(
+                    "### Chuẩn hóa text (pipeline, tối đa 3 bước)\n"
+                    "Áp dụng lần lượt A → B → C. Cả 3 thư viện chỉ trả về **text** "
+                    "(không phoneme) nên có thể xếp chuỗi."
+                )
+                with gr.Row():
+                    norm_step1 = gr.Dropdown(
+                        label="Bước 1",
+                        choices=_norm_choices,
+                        value="vinorm",
+                    )
+                    norm_step2 = gr.Dropdown(
+                        label="Bước 2 (tuỳ chọn)",
+                        choices=_norm_choices,
+                        value="none",
+                    )
+                    norm_step3 = gr.Dropdown(
+                        label="Bước 3 (tuỳ chọn)",
+                        choices=_norm_choices,
+                        value="none",
+                    )
             chunk_max_chars = gr.Slider(
                 80,
                 220,
@@ -297,6 +345,20 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 label="Max ký tự / chunk",
                 info="ZipVoice ~100 token/chunk. Giảm nếu OOM; tăng nhẹ cho đoạn ngắn.",
             )
+
+        with gr.Row():
+            preview_norm_btn = gr.Button(
+                "Xem trước chuẩn hóa (ô 3)",
+                size="sm",
+                variant="secondary",
+            )
+        norm_preview = gr.Textbox(
+            label="Kết quả pipeline chuẩn hóa — chạy trước khi TTS",
+            lines=12,
+            max_lines=24,
+            interactive=False,
+            placeholder="Chọn pipeline → nhập văn bản ô 3 → bấm nút trên",
+        )
 
         btn = gr.Button("Tổng hợp giọng nói (ONNX)", variant="primary")
         save_status = gr.Markdown("")
@@ -322,6 +384,11 @@ nghỉ **0.35s/câu**, **0.65s/đoạn**, **1.2s/tiêu đề chương**.
             inputs=[voice_dropdown],
             outputs=[ref_audio, ref_text, asset_info],
         )
+        preview_norm_btn.click(
+            preview_normalize,
+            inputs=[gen_text, norm_step1, norm_step2, norm_step3, chunk_max_chars],
+            outputs=[norm_preview],
+        )
         btn.click(
             infer_tts,
             inputs=[
@@ -331,7 +398,9 @@ nghỉ **0.35s/câu**, **0.65s/đoạn**, **1.2s/tiêu đề chương**.
                 gen_text,
                 speed,
                 export_format,
-                normalize_backend,
+                norm_step1,
+                norm_step2,
+                norm_step3,
                 chunk_max_chars,
                 use_int8,
             ],

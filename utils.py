@@ -371,6 +371,14 @@ NORMALIZE_BACKENDS: dict[str, str] = {
     "sea_g2p": "sea-g2p Normalizer",
 }
 
+# Dropdown choices for pipeline steps (bước 2–3 có thể chọn "none")
+NORMALIZE_STEP_CHOICES: dict[str, str] = {
+    "none": "— Không —",
+    "vinorm": NORMALIZE_BACKENDS["vinorm"],
+    "vietnormalizer": NORMALIZE_BACKENDS["vietnormalizer"],
+    "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
+}
+
 _sea_g2p_normalizer = None
 _vietnamese_normalizer = None
 
@@ -435,8 +443,101 @@ def normalize_text(text: str, backend: str = "vinorm") -> str:
         return text
 
 
-def prepare_tts_text(text: str, backend: str = "vinorm") -> str:
-    return post_process_text(normalize_text(text, backend)).lower()
+def build_normalize_pipeline(step1: str, step2: str, step3: str) -> list[str]:
+    """
+    Ghép tối đa 3 bước chuẩn hóa theo thứ tự.
+    Mỗi thư viện chỉ dùng Normalizer (đầu ra là text), không G2P — có thể xếp chuỗi.
+    """
+    pipeline: list[str] = []
+    seen: set[str] = set()
+    for raw in (step1, step2, step3):
+        key = (raw or "none").strip().lower()
+        if key in ("none", "off", "không", ""):
+            continue
+        if key not in NORMALIZE_BACKENDS or key == "none":
+            raise ValueError(f"Backend chuẩn hóa không hợp lệ: {raw!r}")
+        if key in seen:
+            raise ValueError(
+                f"Trùng bước chuẩn hóa: {NORMALIZE_BACKENDS.get(key, key)}"
+            )
+        seen.add(key)
+        pipeline.append(key)
+    return pipeline
+
+
+def format_normalize_pipeline(backends: list[str]) -> str:
+    if not backends:
+        return NORMALIZE_BACKENDS["none"]
+    return " → ".join(NORMALIZE_BACKENDS.get(b, b) for b in backends)
+
+
+def normalize_text_pipeline(text: str, backends: list[str]) -> str:
+    result = text
+    for backend in backends:
+        result = normalize_text(result, backend)
+    return result
+
+
+PREVIEW_MAX_CHARS = 20_000
+
+
+def preview_normalize_output(
+    text: str,
+    step1: str,
+    step2: str,
+    step3: str,
+    chunk_max_chars: int = 135,
+    max_preview_chars: int = PREVIEW_MAX_CHARS,
+) -> str:
+    """
+    Chạy pipeline chuẩn hóa trên văn bản (ô 3) — xem trước khi TTS.
+    Không cần load model inference.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "(Chưa có văn bản — nhập ô số 3 hoặc upload file .txt / .md)"
+
+    pipeline = build_normalize_pipeline(step1, step2, step3)
+    label = format_normalize_pipeline(pipeline)
+    normalized = prepare_tts_text(raw, pipeline)
+    chunks = split_text_for_tts(raw, max_chars=int(chunk_max_chars))
+
+    lines = [
+        f"Pipeline: {label}",
+        f"Gốc: {len(raw):,} ký tự → sau chuẩn hóa: {len(normalized):,} ký tự",
+        f"Chunks TTS (max {int(chunk_max_chars)} ký tự/chunk): {len(chunks)}",
+        "",
+        "── Text sau pipeline (lowercase + dọn dấu câu) ──",
+    ]
+
+    if len(normalized) > max_preview_chars:
+        lines.append(normalized[:max_preview_chars])
+        lines.append(
+            f"\n… (còn {len(normalized) - max_preview_chars:,} ký tự — "
+            "bấm Tổng hợp để xử lý toàn bộ)"
+        )
+    else:
+        lines.append(normalized)
+
+    if len(chunks) > 1:
+        lines.extend(["", "── Xem trước từng chunk (5 chunk đầu) ──"])
+        for i, ch in enumerate(chunks[:5]):
+            chunk_norm = prepare_tts_text(ch.text, pipeline)
+            lines.append(f"[{i + 1}/{len(chunks)}] {chunk_norm}")
+        if len(chunks) > 5:
+            lines.append(f"… và {len(chunks) - 5} chunk nữa")
+
+    return "\n".join(lines)
+
+
+def prepare_tts_text(text: str, backend: str | list[str] = "vinorm") -> str:
+    if isinstance(backend, list):
+        normalized = (
+            normalize_text_pipeline(text, backend) if backend else text
+        )
+    else:
+        normalized = normalize_text(text, backend)
+    return post_process_text(normalized).lower()
 
 
 def normalize_vietnamese(text: str) -> str:

@@ -6,6 +6,8 @@ Model ONNX export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/h
 
 **Tác giả:** Pham Trong Lam · **License:** Non-Commercial (xem `LICENSE`)
 
+Tiếng Việt | [English](README_EN.md)
+
 ## So với repo PyTorch đầy đủ
 
 | | [ZipVoice-Vietnamese-GUI](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-GUI) | Repo này |
@@ -29,10 +31,15 @@ Mở http://127.0.0.1:7862
 - 9 giọng mẫu trong `assets/ref_audio/` + `ref_info.json`
 - Upload giọng mẫu + transcript bắt buộc (không ASR)
 - Upload `.txt` / `.md` cho **sách dài**
-- **Chuẩn hóa text:** không / vinorm / vietnormalizer / sea-g2p
+- **Chuẩn hóa text (pipeline):** chọn tối đa 3 bước lần lượt — vinorm → vietnormalizer → sea-g2p (hoặc bất kỳ thứ tự nào)
+- **Xem trước chuẩn hóa:** nút riêng + ô kết quả trước khi TTS (không load model)
 - **Chia chunk thông minh:** đoạn → câu → gộp đến max ký tự; nghỉ 0.35s/câu, 0.65s/đoạn, 1.2s/chương
 - Xuất WAV / MP3 → `output/`
 - ONNX INT8 (mặc định, nhanh hơn) hoặc FP32
+
+### Pipeline chuẩn hóa
+
+Chọn **Bước 1 → 2 → 3** (mỗi bước: không / vinorm / vietnormalizer / sea-g2p). Cả 3 thư viện chỉ dùng **Normalizer** (đầu ra là text, không phoneme) nên có thể xếp chuỗi — ví dụ `vinorm → sea-g2p` cho sách nhiều số. Không cho phép trùng thư viện.
 
 ## Cấu trúc
 
@@ -45,6 +52,13 @@ app.py                # Gradio GUI
 onnx_engine.py        # ONNX inference
 utils.py              # chuẩn hóa + chia văn bản dài
 ```
+
+## Tại sao vẫn cần PyTorch?
+
+ONNX chỉ thay **text encoder + flow-matching decoder** (~600 MB checkpoint PyTorch).
+**Vocos vocoder** (mel → waveform) vẫn chạy PyTorch — đúng thiết kế upstream ZipVoice ONNX.
+Ngoài ra `torch`/`torchaudio` dùng cho tensor giữa các bước ONNX và load file giọng mẫu.
+**Không** cần tải checkpoint ZipVoice PyTorch ~470 MB.
 
 ## Yêu cầu
 
