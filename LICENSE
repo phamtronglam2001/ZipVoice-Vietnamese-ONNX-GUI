@@ -1,0 +1,54 @@
+Giấy phép sử dụng — ZipVoice Vietnamese GUI
+Copyright (c) 2026 Pham Trong Lam
+
+═══════════════════════════════════════════════════════════════════
+
+PHẠM VI ĐƯỢC PHÉP
+
+Mã nguồn, tài liệu và file giọng mẫu (.wav) trong repository này CHỈ được
+sử dụng cho các mục đích sau:
+
+  • Nghiên cứu khoa học, thử nghiệm kỹ thuật
+  • Giáo dục, đào tạo, demo học thuật
+  • Hoạt động phi lợi nhuận, cá nhân, không kinh doanh
+
+═══════════════════════════════════════════════════════════════════
+
+CẤM SỬ DỤNG THƯƠNG MẠI
+
+Nghiêm cấm mọi hình thức sử dụng nhằm mục đích KIẾM TIỀN hoặc LỢI NHUẬN,
+bao gồm nhưng không giới hạn:
+
+  • Bán, cho thuê, cấp phép thương mại phần mềm hoặc audio sinh ra
+  • Tích hợp vào sản phẩm/dịch vụ trả phí, quảng cáo, marketing có thu
+  • Sản xuất nội dung thương mại (sách nói bán, app TTS trả phí, v.v.)
+  • Voice cloning phục vụ kinh doanh mà không có quyền hợp pháp đối với giọng gốc
+
+Người dùng tự chịu trách nhiệm tuân thủ giấy phép model
+[hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h)
+(CC-BY-NC-SA-4.0) và quyền sở hữu giọng nói trong file .wav mẫu.
+
+═══════════════════════════════════════════════════════════════════
+
+CẢNH BÁO
+
+  Việc cố ý dùng công cụ này để kiếm tiền trái phép không chỉ vi phạm
+  giấy phép này mà còn có thể dẫn đến HỆ LUỴ PHÁP LÝ về sau (bản quyền,
+  quyền hình ảnh/giọng nói, hợp đồng vi phạm NC license, v.v.).
+
+  Tác giả khuyến cáo nghiêm túc: không lợi dụng công nghệ TTS/clone giọng
+  cho mục đích thương mại khi chưa có đủ cơ sở pháp lý. Hành vi trục lợi
+  bất chính có thể gây hậu quả nặng nề về mặt pháp luật và đạo đức.
+
+═══════════════════════════════════════════════════════════════════
+
+MIỄN TRỪ TRÁCH NHIỆM
+
+PHẦN MỀM CUNG CẤP "NGUYÊN TRẠNG", KHÔNG BẢO ĐẢM. TÁC GIẢ KHÔNG CHỊU
+TRÁCH NHIỆM VỀ THIỆT HẠI PHÁT SINH TỪ VIỆC SỬ DỤNG HOẶC LẠM DỤNG.
+
+═══════════════════════════════════════════════════════════════════
+
+English summary: Non-Commercial Use Only — Research, Education, Non-Profit.
+Commercial use and monetization are strictly prohibited and may result
+in legal consequences. See model card for additional weight license terms.

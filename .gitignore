@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+ffmpeg/
+vendor/
+models/vocoder/
+output/*
+!output/.gitkeep
+*.png
+*.mp3
+.install_mode
+logs/
+.gradio/
+.DS_Store
+Thumbs.db
