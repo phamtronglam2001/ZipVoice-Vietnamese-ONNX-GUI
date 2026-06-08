@@ -61,6 +61,7 @@ except ImportError:
 
 from assets_loader import MANUAL_CHOICE  # noqa: E402
 from slint_gui.backend.tts_controller import TTSController  # noqa: E402
+from slint_gui.theme_prefs import load_dark_mode, save_dark_mode  # noqa: E402
 from tts_pipeline import TTSResult, TTSError  # noqa: E402
 
 UI_PATH = Path(__file__).resolve().parent / "ui" / "app.slint"
@@ -99,6 +100,14 @@ class MainWindow(components.MainWindow):
         self._sync_voices()
         self.pipeline_display = self.controller.pipeline_display()
         self.runtime_device = self.controller.predicted_runtime_device()
+        self.dark_mode = load_dark_mode(default=False)
+        self.apply_theme()
+
+    @slint.callback
+    def theme_toggle_clicked(self) -> None:
+        self.dark_mode = not bool(self.dark_mode)
+        self.apply_theme()
+        save_dark_mode(bool(self.dark_mode))
 
     def _sync_static_options(self) -> None:
         c = self.controller

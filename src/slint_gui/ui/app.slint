@@ -1,11 +1,11 @@
 // ZipVoice Vietnamese ONNX TTS — Slint GUI (scaffold)
-import { Button, ComboBox, CheckBox, SpinBox, Slider, TabWidget, ProgressIndicator, ScrollView, LineEdit } from "std-widgets.slint";
+import { Button, ComboBox, CheckBox, SpinBox, Slider, TabWidget, ProgressIndicator, ScrollView, LineEdit, Palette } from "std-widgets.slint";
 
 export component MainWindow inherits Window {
     title: "ZipVoice Vietnamese ONNX TTS (Slint)";
     preferred-width: 980px;
     preferred-height: 820px;
-    background: #f5f6f8;
+    background: Palette.background;
 
     callback refresh-voices();
     callback voice-changed(int);
@@ -20,10 +20,13 @@ export component MainWindow inherits Window {
     callback browse-ref-audio();
     callback browse-gen-txt-file();
     callback gpu-setting-changed();
+    callback theme-toggle-clicked();
 
     in-out property <bool> busy: false;
     in-out property <float> progress-value: 0.0;
     in-out property <string> progress-label: "";
+
+    in-out property <bool> dark-mode: false;
 
     in-out property <[string]> voice-options: [];
     in-out property <int> voice-index: 0;
@@ -69,21 +72,37 @@ export component MainWindow inherits Window {
     in-out property <string> norm-preview: "";
     in-out property <string> output-file-path: "";
 
+    public function apply-theme() {
+        Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light;
+    }
+
     VerticalLayout {
         padding: 12px;
         spacing: 8px;
 
-        Text {
-            text: "ZipVoice Vietnamese ONNX TTS";
-            font-size: 20px;
-            font-weight: 700;
-            color: #1a1a2e;
-        }
-        Text {
-            text: "Inference ONNX Runtime (ZipVoice) + Vocos ONNX (100 mel) + librosa ISTFT · assets/ · output/";
-            font-size: 12px;
-            color: #555;
-            wrap: word-wrap;
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "ZipVoice Vietnamese ONNX TTS";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                Text {
+                    text: "Inference ONNX Runtime (ZipVoice) + Vocos ONNX (100 mel) + librosa ISTFT · assets/ · output/";
+                    font-size: 12px;
+                    color: Palette.foreground;
+                    wrap: word-wrap;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: root.dark-mode ? "Chế độ sáng" : "Chế độ tối";
+                enabled: !root.busy;
+                clicked => { root.theme-toggle-clicked(); }
+            }
         }
 
         TabWidget {
@@ -111,7 +130,12 @@ export component MainWindow inherits Window {
                                 clicked => { root.refresh-voices(); }
                             }
                         }
-                        Text { text: root.asset-info; font-size: 12px; color: #444; wrap: word-wrap; }
+                        Text {
+                            text: root.asset-info;
+                            font-size: 12px;
+                            color: Palette.foreground;
+                            wrap: word-wrap;
+                        }
 
                         HorizontalLayout {
                             LineEdit {
@@ -127,7 +151,11 @@ export component MainWindow inherits Window {
                         }
 
                         VerticalLayout {
-                            Text { text: "2) Nội dung TRONG file giọng mẫu (bắt buộc)"; font-weight: 600; }
+                            Text {
+                                text: "2) Nội dung TRONG file giọng mẫu (bắt buộc)";
+                                font-weight: 600;
+                                color: Palette.foreground;
+                            }
                             TextInput {
                                 text <=> root.ref-text;
                                 enabled: !root.busy;
@@ -136,7 +164,11 @@ export component MainWindow inherits Window {
                         }
 
                         VerticalLayout {
-                            Text { text: "3) Văn bản CẦN ĐỌC (output TTS)"; font-weight: 600; }
+                            Text {
+                                text: "3) Văn bản CẦN ĐỌC (output TTS)";
+                                font-weight: 600;
+                                color: Palette.foreground;
+                            }
                             TextInput {
                                 text <=> root.gen-text;
                                 enabled: !root.busy;
@@ -158,7 +190,11 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalLayout {
-                            Text { text: "Chế độ văn bản đầu vào:"; vertical-alignment: center; }
+                            Text {
+                                text: "Chế độ văn bản đầu vào:";
+                                vertical-alignment: center;
+                                color: Palette.foreground;
+                            }
                             ComboBox {
                                 model: root.input-mode-options;
                                 current-index <=> root.input-mode-index;
@@ -180,6 +216,7 @@ export component MainWindow inherits Window {
                             text: "Pipeline chuẩn hóa — thêm bước, sắp xếp, hoặc dùng preset Sách/Audiobook.";
                             wrap: word-wrap;
                             font-size: 12px;
+                            color: Palette.foreground;
                         }
 
                         HorizontalLayout {
@@ -212,11 +249,15 @@ export component MainWindow inherits Window {
                             text: root.pipeline-display;
                             wrap: word-wrap;
                             font-size: 12px;
-                            color: #333;
+                            color: Palette.foreground;
                         }
 
                         HorizontalLayout {
-                            Text { text: "Max ký tự / chunk:"; vertical-alignment: center; }
+                            Text {
+                                text: "Max ký tự / chunk:";
+                                vertical-alignment: center;
+                                color: Palette.foreground;
+                            }
                             SpinBox {
                                 minimum: 80;
                                 maximum: 220;
@@ -228,23 +269,23 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             spacing: 6px;
                             HorizontalLayout {
-                                Text { text: "Nghỉ câu (s)"; min-width: 120px; vertical-alignment: center; }
+                                Text { text: "Nghỉ câu (s)"; min-width: 120px; vertical-alignment: center; color: Palette.foreground; }
                                 Slider { minimum: 0.1; maximum: 1.5; value <=> root.pause-sentence; enabled: !root.busy; }
                             }
                             HorizontalLayout {
-                                Text { text: "Nghỉ đoạn (s)"; min-width: 120px; vertical-alignment: center; }
+                                Text { text: "Nghỉ đoạn (s)"; min-width: 120px; vertical-alignment: center; color: Palette.foreground; }
                                 Slider { minimum: 0.2; maximum: 2.0; value <=> root.pause-paragraph; enabled: !root.busy; }
                             }
                             HorizontalLayout {
-                                Text { text: "Nghỉ chương (s)"; min-width: 120px; vertical-alignment: center; }
+                                Text { text: "Nghỉ chương (s)"; min-width: 120px; vertical-alignment: center; color: Palette.foreground; }
                                 Slider { minimum: 0.5; maximum: 4.0; value <=> root.pause-chapter; enabled: !root.busy; }
                             }
                             HorizontalLayout {
-                                Text { text: "Nghỉ liệt kê (s)"; min-width: 120px; vertical-alignment: center; }
+                                Text { text: "Nghỉ liệt kê (s)"; min-width: 120px; vertical-alignment: center; color: Palette.foreground; }
                                 Slider { minimum: 0.2; maximum: 2.5; value <=> root.pause-enum; enabled: !root.busy; }
                             }
                             HorizontalLayout {
-                                Text { text: "Nghỉ cắt phẩy (s)"; min-width: 120px; vertical-alignment: center; }
+                                Text { text: "Nghỉ cắt phẩy (s)"; min-width: 120px; vertical-alignment: center; color: Palette.foreground; }
                                 Slider { minimum: 0.05; maximum: 0.8; value <=> root.pause-forced; enabled: !root.busy; }
                             }
                         }
@@ -260,7 +301,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
 
                         HorizontalLayout {
-                            Text { text: "Tốc độ:"; vertical-alignment: center; }
+                            Text { text: "Tốc độ:"; vertical-alignment: center; color: Palette.foreground; }
                             Slider {
                                 minimum: 0.3;
                                 maximum: 2.0;
@@ -270,7 +311,7 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalLayout {
-                            Text { text: "Định dạng xuất:"; vertical-alignment: center; }
+                            Text { text: "Định dạng xuất:"; vertical-alignment: center; color: Palette.foreground; }
                             ComboBox {
                                 model: root.export-format-options;
                                 current-index <=> root.export-format-index;
@@ -279,7 +320,7 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalLayout {
-                            Text { text: "ONNX quant mode:"; vertical-alignment: center; }
+                            Text { text: "ONNX quant mode:"; vertical-alignment: center; color: Palette.foreground; }
                             ComboBox {
                                 model: root.quant-mode-options;
                                 current-index <=> root.quant-mode-index;
@@ -298,6 +339,7 @@ export component MainWindow inherits Window {
                             text: "Thiết bị thực tế (ONNX Runtime)";
                             font-weight: 600;
                             font-size: 12px;
+                            color: Palette.foreground;
                         }
                         TextInput {
                             text <=> root.runtime-device;
@@ -306,7 +348,7 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalLayout {
-                            Text { text: "Workers song song:"; vertical-alignment: center; }
+                            Text { text: "Workers song song:"; vertical-alignment: center; color: Palette.foreground; }
                             SpinBox {
                                 minimum: 1;
                                 maximum: root.parallel-workers-max;
@@ -317,33 +359,33 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Cần onnxruntime-gpu (CUDA) hoặc ORT DirectML. Env: ZIPVOICE_ONNX_GPU=1 (run_gpu.bat / run_slint_gui.bat khi .install_mode=gpu).";
                             font-size: 11px;
-                            color: #666;
+                            color: Palette.foreground;
                             wrap: word-wrap;
                         }
 
                         Text {
                             text: root.workers-hint;
                             font-size: 11px;
-                            color: #666;
+                            color: Palette.foreground;
                             wrap: word-wrap;
                         }
 
                         HorizontalLayout {
-                            Text { text: "num_step:"; vertical-alignment: center; }
+                            Text { text: "num_step:"; vertical-alignment: center; color: Palette.foreground; }
                             SpinBox {
                                 minimum: 4;
                                 maximum: 32;
                                 value <=> root.synth-num-step;
                                 enabled: !root.busy;
                             }
-                            Text { text: "guidance:"; vertical-alignment: center; }
+                            Text { text: "guidance:"; vertical-alignment: center; color: Palette.foreground; }
                             Slider {
                                 minimum: 0.5;
                                 maximum: 2.0;
                                 value <=> root.synth-guidance-scale;
                                 enabled: !root.busy;
                             }
-                            Text { text: "t_shift:"; vertical-alignment: center; }
+                            Text { text: "t_shift:"; vertical-alignment: center; color: Palette.foreground; }
                             Slider {
                                 minimum: 0.1;
                                 maximum: 1.0;
@@ -361,27 +403,27 @@ export component MainWindow inherits Window {
                     padding: 8px;
                     spacing: 6px;
 
-                    Text { text: "Tóm tắt"; font-weight: 600; }
+                    Text { text: "Tóm tắt"; font-weight: 600; color: Palette.foreground; }
                     TextInput {
                         text <=> root.status-summary;
                         read-only: true;
                         min-height: 100px;
                     }
 
-                    Text { text: "File output"; font-weight: 600; }
+                    Text { text: "File output"; font-weight: 600; color: Palette.foreground; }
                     LineEdit {
                         text <=> root.output-file-path;
                         read-only: true;
                     }
 
-                    Text { text: "Text đã chuẩn hóa (xem trước)"; font-weight: 600; }
+                    Text { text: "Text đã chuẩn hóa (xem trước)"; font-weight: 600; color: Palette.foreground; }
                     TextInput {
                         text <=> root.norm-preview;
                         read-only: true;
                         min-height: 80px;
                     }
 
-                    Text { text: "Nhật ký trạng thái (debug)"; font-weight: 600; }
+                    Text { text: "Nhật ký trạng thái (debug)"; font-weight: 600; color: Palette.foreground; }
                     TextInput {
                         text <=> root.status-log;
                         read-only: true;
@@ -418,7 +460,7 @@ export component MainWindow inherits Window {
                 text: root.progress-label;
                 vertical-alignment: center;
                 font-size: 12px;
-                color: #555;
+                color: Palette.foreground;
             }
         }
     }

@@ -62,6 +62,7 @@ Shared inference: `src/tts_pipeline.py`. Gradio `src/app.py` also calls `iter_tt
 | Chunk size & pause sliders | Same defaults (135 chars, pause 0.35/0.65/2.0/0.45/0.28 s) |
 | Speed, export format, ONNX quant | `QUANT_MODE_CHOICES` + auto-detect default |
 | GPU toggle | `use_onnx_gpu` default from env (`is_onnx_gpu_env`) |
+| **Dark / light mode** | Header button — syncs `Palette.color-scheme`; saved in `profiles/slint_ui.json` |
 | **Thiết bị thực tế** | Predicted before run; updated after ONNX engine load |
 | Synth params | num_step=16, guidance=1.0, t_shift=0.5 |
 | Parallel workers | Same clamp rules as Gradio |
@@ -97,3 +98,4 @@ Shared inference: `src/tts_pipeline.py`. Gradio `src/app.py` also calls `iter_tt
 
 - Does **not** replace `src/app.py`; both GUIs share `src/tts_pipeline.py`.
 - Slint deps live in `requirements-slint.txt` at project root.
+- **Theme:** std-widgets follow `Palette.color-scheme`. Window background/text use `Palette.*` so widgets and chrome match. If colors looked inverted before, Windows dark mode + hardcoded light `#f5f6f8` background caused the mismatch — use **Chế độ tối / Chế độ sáng** in the header.
