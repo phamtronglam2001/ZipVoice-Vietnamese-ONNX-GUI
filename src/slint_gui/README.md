@@ -1,12 +1,12 @@
 # ZipVoice Vietnamese ONNX — Slint GUI (production)
 
-Native desktop GUI for **production TTS**. Uses shared `tts_pipeline.py` at project root (same stages, defaults, and inference params as Gradio).
+Native desktop GUI for **production TTS**. Uses shared `src/tts_pipeline.py` (same stages, defaults, and inference params as Gradio).
 
-**Gradio** (`app.py`) is the **debug** surface: status-log tooling, export normalized `.txt`, export per-chunk WAVs, presets, in-app playback. Those features stay in Gradio only — not ported to Slint.
+**Gradio** (`src/app.py`) is the **debug** surface: status-log tooling, export normalized `.txt`, export per-chunk WAVs, presets, in-app playback. Those features stay in Gradio only — not ported to Slint.
 
 ## Prerequisites
 
-- Completed project setup (`install_cpu.bat` or GPU install)
+- Completed project setup (`install_cpu.bat` or `install_gpu.bat`)
 - Models in `models/onnx/` and `models/vocoder/`
 - Python venv at `.venv/` (created by `uv venv` — may not include `pip.exe`)
 
@@ -26,28 +26,30 @@ run_slint_gui.bat
 
 Uses the same CPU/GPU env as Gradio launchers: `run_slint_gui.bat` reads `.install_mode` and sets `ZIPVOICE_ONNX_GPU=1` when GPU (same as `run_gpu.bat`). Force CPU: `ZIPVOICE_FORCE_CPU=1`.
 
-Or:
+Or from repo root with `PYTHONPATH=src`:
 
 ```bat
-.venv\Scripts\python.exe slint_gui\main.py
+set PYTHONPATH=src
+.venv\Scripts\python.exe src\slint_gui\main.py
 ```
 
 Verify import / UI load:
 
 ```bat
-.venv\Scripts\python.exe -c "import slint_gui; import slint; slint.load_file('slint_gui/ui/app.slint')"
+set PYTHONPATH=src
+.venv\Scripts\python.exe -c "import slint; slint.load_file('src/slint_gui/ui/app.slint')"
 ```
 
 ## Layout
 
 ```
-slint_gui/
-  main.py                 # Entry point, Slint window + callbacks
-  ui/app.slint            # Main window UI (tabs)
+src/slint_gui/
+  main.py                    # Entry point, Slint window + callbacks
+  ui/app.slint               # Main window UI (tabs)
   backend/tts_controller.py  # State + async synthesis wrapper
 ```
 
-Shared inference: `tts_pipeline.py` (project root). Gradio `app.py` also calls `iter_tts_pipeline` from the same module.
+Shared inference: `src/tts_pipeline.py`. Gradio `src/app.py` also calls `iter_tts_pipeline` from the same module.
 
 ## Production features (Slint)
 
@@ -93,5 +95,5 @@ Shared inference: `tts_pipeline.py` (project root). Gradio `app.py` also calls `
 
 ## Notes
 
-- Does **not** replace `app.py`; both GUIs share `tts_pipeline.py`.
+- Does **not** replace `src/app.py`; both GUIs share `src/tts_pipeline.py`.
 - Slint deps live in `requirements-slint.txt` at project root.

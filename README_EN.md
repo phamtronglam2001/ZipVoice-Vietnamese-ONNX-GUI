@@ -15,17 +15,17 @@ Weights exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hy
 - Configurable text normalization pipeline (extensible registry in `src/text/normalizers/`)
 - Chunk **min / max characters**; short micro-segments merged with `\n` before one synthesis call
 - Audiobook pauses: sentence / paragraph / chapter / enum / comma split
-- JSON presets (`profiles/`), CLI (`cli_tts.py`)
+- JSON presets (`profiles/`), CLI (`run_cli.bat`)
 - Gradio: per-chunk WAV export, ODE seed, runtime device log
 
 ---
 
-## Quick install (Windows)
+## Install (Windows)
 
-```bat
-install_cpu.bat
-rem or install_gpu.bat  (NVIDIA CUDA)
-```
+| Script | Purpose |
+|--------|---------|
+| `install_cpu.bat` | Create `.venv`, install CPU deps, write `.install_mode=cpu` |
+| `install_gpu.bat` | Install `onnxruntime-gpu` + CUDA DLLs, write `.install_mode=gpu` |
 
 Requires **Git LFS** for ONNX weights. Espeak via `piper_phonemize` wheel (install scripts handle it).
 
@@ -33,11 +33,13 @@ Requires **Git LFS** for ONNX weights. Espeak via `piper_phonemize` wheel (insta
 
 ## Run
 
+All `.bat` launchers set `PYTHONPATH=%~dp0src` then invoke modules under `src/`.
+
 | Purpose | Command |
 |---------|---------|
-| **Production GUI (Slint)** | `run_slint_gui.bat` |
-| **Debug GUI (Gradio)** | `run_gui.bat` / `run_gpu.bat` / `run_cpu.bat` |
-| **CLI** | `run_cli.bat` or `python src\cli_tts.py synthesize --help` |
+| **Production GUI (Slint)** | `run_slint_gui.bat` → `src/slint_gui/main.py` |
+| **Debug GUI (Gradio)** | `run_gui.bat` (auto CPU/GPU) or `run_cpu.bat` / `run_gpu.bat` |
+| **CLI** | `run_cli.bat` → `src/cli_tts.py` |
 
 ---
 
@@ -87,6 +89,7 @@ Output from `hynt` models must comply with **CC-BY-NC-SA-4.0** and be labeled AI
 Folder layout, adding normalizers, imports: **[docs/for_dev.md](docs/for_dev.md)**
 
 ```bat
+set PYTHONPATH=src
 python -m unittest test_normalize_pipeline -v
 ```
 

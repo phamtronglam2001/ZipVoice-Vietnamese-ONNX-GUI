@@ -1,8 +1,24 @@
 # For developers
 
-Internal layout after the `src/` reorganization. Launchers (`.bat`) stay at repo root; Python code lives under `src/`.
+Python code lives under `src/`. Launchers (`.bat`) stay at repo root and set `PYTHONPATH=%~dp0src`.
 
-## Layout
+## Repo layout
+
+```
+<root>/
+  *.bat, README*.md, LICENSE, requirements*.txt
+  assets/    models/    profiles/    docs/    scripts/    src/
+```
+
+| Path | Role |
+|------|------|
+| `assets/` | Bundled reference voices + `ref_info.json` |
+| `models/` | ZipVoice ONNX weights, vocoder, licenses |
+| `profiles/` | JSON presets |
+| `scripts/` | Diagnostics & debug utilities (not imported as app code) |
+| `src/` | All application Python |
+
+## `src/` layout
 
 ```
 src/
@@ -26,16 +42,24 @@ src/
   audio/
     post_process.py      # join_tts_audio_chunks, leading_pause, forced-split crossfade
     ref_audio.py         # preprocess_ref_audio_text, resample
-  slint_gui/             # Slint (production)
-
-scripts/                 # Root utilities (set sys.path to src/ or use PYTHONPATH)
+  slint_gui/             # Slint production GUI
+    main.py
+    ui/app.slint
+    backend/tts_controller.py
 ```
 
-Repo root keeps: `run_*.bat`, `install_*.bat`, `assets/`, `models/`, `profiles/`, `output/`, `logs/`, `docs/`.
+## Launchers
 
-## PYTHONPATH
+| Script | Entry |
+|--------|-------|
+| `install_cpu.bat` | `uv` venv + CPU deps; writes `.install_mode=cpu` |
+| `install_gpu.bat` | GPU ORT + CUDA DLLs; writes `.install_mode=gpu` |
+| `run_slint_gui.bat` | `src/slint_gui/main.py` |
+| `run_cli.bat` | `src/cli_tts.py` (passes CLI args) |
+| `run_gui.bat` | Delegates to `run_cpu.bat` or `run_gpu.bat` via `.install_mode` |
+| `run_cpu.bat` / `run_gpu.bat` | `src/app.py` (Gradio) |
 
-Batch launchers set `PYTHONPATH=%~dp0src` before invoking Python. Scripts under `scripts/` prepend `ROOT / "src"` to `sys.path`.
+All set `PYTHONPATH=%~dp0src`. Scripts under `scripts/` prepend `ROOT / "src"` to `sys.path` when run directly.
 
 ## Text pipeline
 
@@ -83,15 +107,17 @@ No mid-wave char-ratio cut or VAD.
 
 ## Tests
 
-From repo root (with venv active or `.venv\Scripts\python.exe`):
+From repo root (venv active or `.venv\Scripts\python.exe`):
 
 ```bat
 set PYTHONPATH=src
 python -m unittest test_normalize_pipeline -v
 ```
 
-Or PowerShell:
+PowerShell:
 
 ```powershell
 $env:PYTHONPATH="src"; python -m unittest test_normalize_pipeline -v
 ```
+
+Both `test_normalize_pipeline` and `src.test_normalize_pipeline` work with `PYTHONPATH=src`.

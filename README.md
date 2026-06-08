@@ -15,17 +15,17 @@ Model weights export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.c
 - Pipeline chuẩn hóa text tùy chỉnh (VieNeu, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
 - Chia chunk **min / max ký tự**; gộp micro-chunk ngắn bằng `\n` trước khi synth
 - Nghỉ audiobook: câu / đoạn / chương / enum / cắt phẩy
-- Preset JSON (`profiles/`), CLI (`cli_tts.py`)
+- Preset JSON (`profiles/`), CLI (`run_cli.bat`)
 - Gradio: export từng chunk WAV, ODE seed, log thiết bị ONNX
 
 ---
 
-## Cài đặt nhanh (Windows)
+## Cài đặt (Windows)
 
-```bat
-install_cpu.bat
-rem hoặc install_gpu.bat  (NVIDIA CUDA)
-```
+| Script | Mục đích |
+|--------|----------|
+| `install_cpu.bat` | Tạo `.venv`, cài CPU deps, ghi `.install_mode=cpu` |
+| `install_gpu.bat` | Cài `onnxruntime-gpu` + CUDA DLL, ghi `.install_mode=gpu` |
 
 Cần **Git LFS** để pull weights ONNX. Espeak qua wheel `piper_phonemize` (script cài tự xử lý).
 
@@ -33,11 +33,13 @@ Cần **Git LFS** để pull weights ONNX. Espeak qua wheel `piper_phonemize` (s
 
 ## Chạy ứng dụng
 
+Mọi launcher `.bat` đặt `PYTHONPATH=%~dp0src` rồi gọi module trong `src/`.
+
 | Mục đích | Lệnh |
 |----------|------|
-| **GUI production (Slint)** | `run_slint_gui.bat` |
-| **GUI debug (Gradio)** | `run_gui.bat` / `run_gpu.bat` / `run_cpu.bat` |
-| **CLI** | `run_cli.bat` hoặc `python src\cli_tts.py synthesize --help` |
+| **GUI production (Slint)** | `run_slint_gui.bat` → `src/slint_gui/main.py` |
+| **GUI debug (Gradio)** | `run_gui.bat` (auto CPU/GPU) hoặc `run_cpu.bat` / `run_gpu.bat` |
+| **CLI** | `run_cli.bat` → `src/cli_tts.py` |
 
 Slint: giọng, preset, synth sách dài. Gradio: debug chunk, seed, xem pipeline chuẩn hóa.
 
@@ -89,6 +91,7 @@ Audio sinh ra từ model `hynt` phải tuân thủ **CC-BY-NC-SA-4.0** và ghi r
 Cấu trúc thư mục, thêm normalizer, import paths: **[docs/for_dev.md](docs/for_dev.md)**
 
 ```bat
+set PYTHONPATH=src
 python -m unittest test_normalize_pipeline -v
 ```
 
