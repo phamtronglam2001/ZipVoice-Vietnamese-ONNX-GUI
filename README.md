@@ -120,8 +120,20 @@ run_gui.bat
 
 ### Demo
 
-<!-- TODO: add a screenshot of the Gradio GUI here, e.g. ![GUI](docs/screenshot.png) -->
-> _Screenshot coming soon — drop a GUI capture at `docs/screenshot.png`._
+![Gradio GUI](docs/screenshot.png)
+
+| Sample | |
+|--------|---|
+| **Reference voice** | [▶ `docs/demo/ref_voice.mp3`](docs/demo/ref_voice.mp3) |
+| **Transcript** | *Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.* |
+| **Text to synthesize** | [`docs/demo/sample_text.txt`](docs/demo/sample_text.txt) |
+| **Output** | [▶ `docs/demo/output.wav`](docs/demo/output.wav) |
+
+> Drop `docs/screenshot.png`, `docs/demo/ref_voice.mp3`, and `docs/demo/output.wav` — README renders them automatically. See [`docs/demo/README.md`](docs/demo/README.md).
+
+**Example input** (preview):
+
+> Tiếng Việt là tiếng nói thiêng liêng và giàu đẹp của dân tộc Việt Nam. Vẻ đẹp của tiếng Việt trước hết thể hiện ở âm thanh giàu nhạc tính với những thanh điệu trầm bổng, khiến lời nói nghe như một khúc hát dịu dàng.
 
 ### Gradio tabs
 
@@ -169,7 +181,7 @@ python scripts/profile_inference.py --gpu --quant int4 --batch 4
 python scripts/diagnose_gpu.py
 ```
 
-> **GPU note:** use **workers = 1** on GPU (multiple CUDA processes often crash). INT4 MatMulNBits may fall back to CPU even when GPU is enabled — profile first.
+> **GPU note:** use **workers = 1** on GPU (multiple CUDA processes often crash). 
 
 ---
 

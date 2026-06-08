@@ -1,0 +1,258 @@
+/*
+ * =============================================================================
+ * ZipVoice Gradio GUI — LAYOUT CSS (kích thước + vị trí control)
+ * =============================================================================
+ * File : src/gradio_custom.css
+ * Load : src/app.py -> demo.launch(css=_load_gradio_css())
+ * Sau khi sửa: chạy lại run_gui.bat (không cần cài lại).
+ *
+ * NGUYÊN TẮC (đã sửa cho an toàn, không bóp méo control gốc):
+ *   - KHÔNG ép chiều cao cứng cho input/slider/dropdown (Gradio tự lo).
+ *   - Hàng nhiều control: cho WRAP + min-width -> hẹp thì xuống dòng, không bị bóp.
+ *   - Khối upload (audio/file): chỉ giảm padding, KHÔNG giới hạn max-height
+ *     (tránh bị cắt -> tràn đè control khác).
+ *   - App căn giữa, giới hạn bề ngang, khoảng cách gọn & đồng nhất.
+ *
+ * CHỈNH NHANH: đổi biến trong :root.
+ * CHỈNH RIÊNG 1 control: tìm #elem_id ở phần theo-tab.
+ * =============================================================================
+ */
+
+:root {
+    --zv-max-width: 1100px;     /* bề ngang tối đa của app (căn giữa) */
+    --zv-content-pad: 10px;     /* padding mép trong */
+    --zv-gap: 8px;              /* khoảng cách giữa control */
+    --zv-radius: 6px;
+
+    /* Bề rộng tối thiểu để control KHÔNG bị bóp (hẹp thì wrap xuống dòng) */
+    --zv-min-slider: 190px;     /* slider (kèm ô số) */
+    --zv-min-field: 170px;      /* dropdown / number / checkbox */
+
+    /* Vùng textarea */
+    --zv-text-min: 4.5em;
+    --zv-text-max: 22vh;
+    --zv-text-min-sm: 3em;
+    --zv-text-max-sm: 16vh;
+
+    /* Khối media (audio/file) — chỉ dùng để giảm độ cao tối thiểu */
+    --zv-media-min: 44px;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL — khung & khoảng cách (KHÔNG đụng chiều cao control)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Căn giữa app + giới hạn bề ngang */
+.gradio-container {
+    max-width: var(--zv-max-width) !important;
+    margin: 0 auto !important;
+    padding-left: var(--zv-content-pad) !important;
+    padding-right: var(--zv-content-pad) !important;
+}
+
+/* Block gọn hơn nhưng không cắt nội dung */
+.gradio-container .block {
+    padding: 4px 6px !important;
+    border-radius: var(--zv-radius) !important;
+    overflow: visible !important;   /* tránh upload bị cắt/tràn đè */
+}
+
+/* Khoảng cách đồng nhất trong form/hàng */
+.gradio-container .form,
+.gradio-container .gap { gap: var(--zv-gap) !important; }
+
+/* Label gọn */
+.gradio-container .block > label > span,
+.gradio-container span[data-testid="block-info"] {
+    margin-bottom: 2px !important;
+    font-size: 0.82em !important;
+    line-height: 1.15 !important;
+}
+
+/* Markdown gọn */
+.zv-compact-md { margin: 0 !important; max-height: 6vh !important; overflow-y: auto !important; }
+.zv-compact-md p { margin: 0.1rem 0 !important; font-size: 0.86em !important; line-height: 1.2 !important; }
+
+/* Textarea Unicode */
+.zv-unicode-text textarea,
+.zv-unicode-text input {
+    font-family: "Segoe UI", "Noto Sans", "DejaVu Sans", system-ui, sans-serif !important;
+    white-space: pre-wrap !important;
+    overflow-y: auto !important;
+    resize: vertical !important;
+}
+.zv-scroll-text textarea {
+    min-height: var(--zv-text-min) !important;
+    max-height: var(--zv-text-max) !important;
+}
+.zv-scroll-text-sm textarea {
+    min-height: var(--zv-text-min-sm) !important;
+    max-height: var(--zv-text-max-sm) !important;
+}
+
+/* Tabs gọn */
+#zv-tabs { margin-top: 0.1rem !important; }
+.gradio-container .tabitem { padding: 0.4rem 0.2rem 0 !important; }
+
+/* Khối media (audio/file): chỉ giảm padding + độ cao tối thiểu, KHÔNG max-height */
+.zv-media .wrap,
+.zv-media .empty,
+.zv-media .file-preview {
+    min-height: var(--zv-media-min) !important;
+    padding: 0.25rem 0.4rem !important;
+}
+.zv-media audio { width: 100% !important; height: 32px !important; }
+.zv-media label span { font-size: 0.8em !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HÀNG NHIỀU CONTROL — cho wrap + min-width để không bị bóp méo
+   (slider, dropdown, checkbox, number trong cùng 1 Row)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-chunk-slider-row,
+#zv-pause-row-1, #zv-pause-row-2,
+#zv-perf-row-1, #zv-perf-row-2, #zv-perf-row-3,
+#zv-seed-row {
+    flex-wrap: wrap !important;
+    gap: var(--zv-gap) !important;
+    align-items: flex-end !important;   /* control thẳng đáy nhau */
+}
+
+/* Slider: không hẹp quá ô số sẽ bị bóp */
+#zv-chunk-slider-row > *,
+#zv-pause-row-1 > *, #zv-pause-row-2 > *,
+#zv-speed, #zv-parallel-workers, #zv-onnx-threads,
+#zv-batch-size, #zv-synth-num-step {
+    flex: 1 1 var(--zv-min-slider) !important;
+    min-width: var(--zv-min-slider) !important;
+}
+
+/* Dropdown / number / checkbox: min-width vừa phải, không giãn quá */
+#zv-export-format, #zv-onnx-quant, #zv-ode-solver {
+    flex: 1 1 var(--zv-min-field) !important;
+    min-width: var(--zv-min-field) !important;
+}
+#zv-use-gpu, #zv-pipeline-overlap,
+#zv-use-fixed-seed, #zv-same-seed-all {
+    flex: 0 0 auto !important;       /* checkbox giữ kích thước tự nhiên */
+}
+#zv-ode-seed { flex: 0 0 9rem !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HEADER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-header { width: 100% !important; margin-bottom: 0.2rem !important; }
+#zv-header p { margin: 0 !important; font-size: 0.95em !important; }
+#zv-header p:last-child {
+    margin-top: 2px !important;
+    font-size: 0.78em !important;
+    opacity: 0.88;
+}
+#zv-vocoder-warn { width: 100% !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAB 1 — Giọng & văn bản (2 cột cân nhau)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Hàng chọn giọng: dropdown dãn, nút hẹp canh phải/đáy */
+#zv-voice-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
+#zv-voice-dropdown { flex: 1 1 auto !important; min-width: 12rem !important; }
+#zv-refresh-btn { flex: 0 0 auto !important; width: 6rem !important; }
+
+#zv-asset-info { width: 100% !important; }
+
+/* 2 cột nội dung: chia đôi, cho phép co (min-width:0) để không tràn */
+#zv-input-row, #zv-output-row { width: 100% !important; gap: var(--zv-gap) !important; }
+#zv-input-col-left, #zv-input-col-right,
+#zv-output-col, #zv-status-col { flex: 1 1 0 !important; min-width: 0 !important; }
+
+#zv-gen-text textarea { min-height: 6em !important; max-height: var(--zv-text-max) !important; }
+#zv-status-log textarea { min-height: 6em !important; max-height: var(--zv-text-max) !important; }
+
+/* Hàng file output + nghe thử: 2 ô chia đôi */
+#zv-out-file, #zv-out-audio { flex: 1 1 0 !important; min-width: 0 !important; }
+#zv-save-status { width: 100% !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAB 2 — Chuẩn hoá text
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-norm-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
+#zv-input-mode { flex: 1 1 auto !important; min-width: 12rem !important; }
+#zv-preview-norm-btn { flex: 0 0 auto !important; width: 6.5rem !important; }
+#zv-export-norm-btn { flex: 0 0 auto !important; width: 5.5rem !important; }
+
+#zv-norm-preview-row { width: 100% !important; gap: var(--zv-gap) !important; }
+#zv-norm-preview-row > div { flex: 1 1 0 !important; min-width: 0 !important; }
+#zv-norm-preview textarea { min-height: 6em !important; max-height: var(--zv-text-max) !important; }
+#zv-export-norm-status { width: 100% !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAB 3 — Chuẩn hóa & chunk (2 cột)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-chunk-main-row { width: 100% !important; gap: var(--zv-gap) !important; }
+#zv-pipeline-col, #zv-chunk-col { flex: 1 1 0 !important; min-width: 0 !important; }
+
+#zv-norm-add-row { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
+#zv-norm-add-step { flex: 1 1 auto !important; min-width: 9rem !important; }
+#zv-norm-add-btn { flex: 0 0 auto !important; width: 4.5rem !important; }
+
+#zv-norm-sel-step { width: 100% !important; }
+
+/* Nút di chuyển: nhỏ, đều, không bị giãn */
+#zv-norm-move-row { width: 100% !important; gap: 4px !important; flex-wrap: wrap !important; }
+#zv-norm-up-btn, #zv-norm-down-btn { flex: 0 0 auto !important; width: 2.6rem !important; }
+#zv-norm-remove-btn, #zv-norm-reset-btn { flex: 0 0 auto !important; width: 3.6rem !important; }
+#zv-norm-audiobook-btn { flex: 0 0 auto !important; width: 4.2rem !important; }
+
+#zv-norm-pipeline-display { width: 100% !important; max-height: 14vh !important; overflow-y: auto !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAB 4 — Hiệu năng & preset
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-runtime-device { width: 100% !important; }
+
+#zv-preset-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
+#zv-preset-dropdown { flex: 1 1 auto !important; min-width: 8rem !important; }
+#zv-preset-load-btn, #zv-preset-save-btn { flex: 0 0 auto !important; width: 4rem !important; }
+#zv-preset-save-name { width: 100% !important; }
+#zv-preset-status { width: 100% !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAB 5 — Debug
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-debug-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
+#zv-preview-chunks-btn, #zv-export-chunks-btn { flex: 0 0 auto !important; width: 7rem !important; }
+
+#zv-chunk-preview textarea { min-height: 6em !important; max-height: 24vh !important; }
+#zv-export-chunks-status { width: 100% !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ACTION BAR — nút Tổng hợp (full-width, nổi bật)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#zv-action-bar {
+    width: 100% !important;
+    border-top: 1px solid var(--border-color-primary);
+    padding: 0.45rem 0 0.2rem !important;
+    margin-top: 0.3rem !important;
+}
+#zv-synth-btn {
+    width: 100% !important;
+    min-height: 2.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em !important;
+}
