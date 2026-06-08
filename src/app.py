@@ -23,6 +23,7 @@ from config import (
     is_force_cpu,
     is_onnx_gpu_env,
     models_ready,
+    onnx_num_threads,
     onnx_quant_mode as get_onnx_quant_mode,
     onnx_ready,
     vocoder_deploy_instructions,
@@ -63,6 +64,7 @@ from chunk_export import (  # noqa: E402
     format_chunk_export_status,
 )
 from chunk_synthesis import max_parallel_workers, ui_parallel_workers_max  # noqa: E402
+from onnx_engine import ODE_SOLVERS  # noqa: E402
 from onnx_providers import predict_runtime_device_summary  # noqa: E402
 from onnx_quant import normalize_quant_mode  # noqa: E402
 from tts_pipeline import (  # noqa: E402
@@ -284,6 +286,10 @@ def _on_load_preset(preset_name: str | None):
         updates["input_mode"],
         updates.get("parallel_workers", gr.update(value=1)),
         updates.get("use_onnx_gpu", gr.update(value=is_onnx_gpu_env())),
+        updates.get("onnx_threads", gr.update(value=0)),
+        updates.get("inference_batch_size", gr.update(value=1)),
+        updates.get("ode_solver", gr.update(value="euler")),
+        updates.get("pipeline_overlap", gr.update(value=True)),
         preset_status_msg,
     )
 
@@ -310,6 +316,10 @@ def _on_save_preset(
     input_mode: str,
     parallel_workers: int,
     use_onnx_gpu: bool,
+    onnx_threads: int = 0,
+    inference_batch_size: int = 1,
+    ode_solver: str = "euler",
+    pipeline_overlap: bool = True,
 ):
     if not save_name or not save_name.strip():
         raise gr.Error("Nhập tên file preset (vd: sach_ai_vy).")
@@ -335,6 +345,10 @@ def _on_save_preset(
         input_mode=input_mode,
         parallel_workers=parallel_workers,
         use_onnx_gpu=use_onnx_gpu,
+        onnx_threads=int(onnx_threads),
+        inference_batch_size=int(inference_batch_size),
+        ode_solver=str(ode_solver),
+        pipeline_overlap=bool(pipeline_overlap),
     )
     try:
         path = save_preset(save_name.strip(), preset)
@@ -518,6 +532,10 @@ def infer_tts(
     use_onnx_gpu: bool = False,
     ode_seed: int = 42,
     use_fixed_seed: bool = True,
+    onnx_threads: int = 0,
+    inference_batch_size: int = 1,
+    ode_solver: str = "euler",
+    pipeline_overlap: bool = True,
     progress=gr.Progress(),
 ) -> Iterator[tuple[str | None, str | None, str, str, str, str]]:
     log = StatusLog()
@@ -550,6 +568,10 @@ def infer_tts(
         use_onnx_gpu=bool(use_onnx_gpu),
         ode_seed=int(ode_seed),
         use_fixed_seed=bool(use_fixed_seed),
+        ode_solver=str(ode_solver),
+        inference_batch_size=int(inference_batch_size),
+        onnx_threads=int(onnx_threads),
+        pipeline_overlap=bool(pipeline_overlap),
     )
 
     def prog(frac, desc=None):
@@ -802,7 +824,6 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 )
                 preset_save_btn = gr.Button("Lưu preset", scale=1)
             preset_status = gr.Markdown("")
-            synth_num_step = gr.State(value=16)
             synth_guidance_scale = gr.State(value=1.0)
             synth_t_shift = gr.State(value=0.5)
 
@@ -939,6 +960,43 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 step=1,
                 label="Số luồng chunk song song (workers)",
                 info=_worker_slider_info(_initial_gpu),
+            )
+            onnx_threads = gr.Slider(
+                0,
+                min(16, os.cpu_count() or 8),
+                value=0,
+                step=1,
+                label="ORT threads (0 = auto)",
+                info=f"Mặc định auto ≈ {onnx_num_threads()} core. Env: ZIPVOICE_ONNX_THREADS",
+            )
+            inference_batch_size = gr.Slider(
+                1,
+                8,
+                value=1,
+                step=1,
+                label="Batch size (GPU tuần tự)",
+                info="Gom N chunk/lần fm_decoder. Env: ZIPVOICE_INFERENCE_BATCH",
+            )
+            synth_num_step = gr.Slider(
+                4,
+                32,
+                value=16,
+                step=1,
+                label="Số bước ODE (num_step)",
+                info=(
+                    "Mỗi bước = 1 lần gọi fm_decoder. Giảm (8–12) = nhanh hơn; "
+                    "16 = mặc định chất lượng. Nên dùng Euler."
+                ),
+            )
+            ode_solver = gr.Dropdown(
+                label="ODE solver",
+                choices=list(ODE_SOLVERS),
+                value="euler",
+                info="heun/midpoint: ít bước hơn có thể giữ chất lượng; mỗi bước tốn thêm 1× fm_decoder",
+            )
+            pipeline_overlap = gr.Checkbox(
+                label="Pipeline overlap (tokenize chunk kế tiếp trên CPU)",
+                value=True,
             )
         use_onnx_gpu.change(
             _predict_runtime_device,
@@ -1122,6 +1180,10 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 input_mode,
                 parallel_workers,
                 use_onnx_gpu,
+                onnx_threads,
+                inference_batch_size,
+                ode_solver,
+                pipeline_overlap,
             ],
             outputs=[preset_dropdown, preset_status],
         )
@@ -1152,6 +1214,10 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 input_mode,
                 parallel_workers,
                 use_onnx_gpu,
+                onnx_threads,
+                inference_batch_size,
+                ode_solver,
+                pipeline_overlap,
                 preset_status,
             ],
         )
@@ -1179,6 +1245,10 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 input_mode,
                 parallel_workers,
                 use_onnx_gpu,
+                onnx_threads,
+                inference_batch_size,
+                ode_solver,
+                pipeline_overlap,
             ],
             outputs=[preset_dropdown, preset_status],
         )
@@ -1255,6 +1325,10 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 use_onnx_gpu,
                 ode_seed_input,
                 use_fixed_seed_cb,
+                onnx_threads,
+                inference_batch_size,
+                ode_solver,
+                pipeline_overlap,
             ],
             outputs=[output_file, output_audio, save_status, norm_preview, status_log_box, runtime_device_display],
             concurrency_limit=1,

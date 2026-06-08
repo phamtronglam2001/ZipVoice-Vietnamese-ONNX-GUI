@@ -69,6 +69,10 @@ class PresetConfig:
     input_mode: str = "raw"  # "raw" | "prepared"
     parallel_workers: int = 1
     use_onnx_gpu: bool = False
+    onnx_threads: int = 0  # 0 = auto (cpu cores capped)
+    inference_batch_size: int = 1
+    ode_solver: str = "euler"
+    pipeline_overlap: bool = True
 
 
 def _slug_name(name: str) -> str:
@@ -219,6 +223,10 @@ def _preset_from_dict(data: dict[str, Any]) -> PresetConfig:
         input_mode=str(data.get("input_mode", "raw")),
         parallel_workers=int(synth.get("parallel_workers", 1)),
         use_onnx_gpu=bool(synth.get("use_onnx_gpu", False)),
+        onnx_threads=int(synth.get("onnx_threads", 0)),
+        inference_batch_size=int(synth.get("inference_batch_size", 1)),
+        ode_solver=str(synth.get("ode_solver", "euler")),
+        pipeline_overlap=bool(synth.get("pipeline_overlap", True)),
     )
 
 
@@ -259,6 +267,10 @@ def preset_to_dict(preset: PresetConfig) -> dict[str, Any]:
             "t_shift": preset.t_shift,
             "parallel_workers": int(preset.parallel_workers),
             "use_onnx_gpu": bool(preset.use_onnx_gpu),
+            "onnx_threads": int(preset.onnx_threads),
+            "inference_batch_size": int(preset.inference_batch_size),
+            "ode_solver": preset.ode_solver,
+            "pipeline_overlap": bool(preset.pipeline_overlap),
         },
         "export": {"format": preset.export_format},
         "input_mode": preset.input_mode,
@@ -331,6 +343,10 @@ def preset_from_gui_state(
     input_mode: str = "raw",
     parallel_workers: int = 1,
     use_onnx_gpu: bool = False,
+    onnx_threads: int = 0,
+    inference_batch_size: int = 1,
+    ode_solver: str = "euler",
+    pipeline_overlap: bool = True,
 ) -> PresetConfig:
     """Alias for collect_gui_state."""
     return collect_gui_state(
@@ -383,6 +399,10 @@ def collect_gui_state(
     input_mode: str = "raw",
     parallel_workers: int = 1,
     use_onnx_gpu: bool = False,
+    onnx_threads: int = 0,
+    inference_batch_size: int = 1,
+    ode_solver: str = "euler",
+    pipeline_overlap: bool = True,
 ) -> PresetConfig:
     pipeline = build_normalize_pipeline(norm_pipeline)
     is_manual = not voice_dropdown or voice_dropdown == MANUAL_CHOICE
@@ -413,6 +433,10 @@ def collect_gui_state(
             input_mode=mode,
             parallel_workers=int(parallel_workers),
             use_onnx_gpu=bool(use_onnx_gpu),
+            onnx_threads=int(onnx_threads),
+            inference_batch_size=int(inference_batch_size),
+            ode_solver=str(ode_solver),
+            pipeline_overlap=bool(pipeline_overlap),
         )
 
     return PresetConfig(
@@ -439,6 +463,10 @@ def collect_gui_state(
         input_mode=mode,
         parallel_workers=int(parallel_workers),
         use_onnx_gpu=bool(use_onnx_gpu),
+        onnx_threads=int(onnx_threads),
+        inference_batch_size=int(inference_batch_size),
+        ode_solver=str(ode_solver),
+        pipeline_overlap=bool(pipeline_overlap),
     )
 
 
@@ -483,12 +511,16 @@ def apply_preset_to_gui(preset: PresetConfig) -> dict[str, Any]:
         "speed": gr.update(value=float(preset.speed)),
         "export_format": gr.update(value=export_val),
         "onnx_quant_mode": gr.update(value=str(preset.onnx_quant_mode)),
-        "synth_num_step": int(preset.num_step),
+        "synth_num_step": gr.update(value=int(preset.num_step)),
         "synth_guidance_scale": float(preset.guidance_scale),
         "synth_t_shift": float(preset.t_shift),
         "input_mode": gr.update(value=preset.input_mode),
         "parallel_workers": gr.update(value=int(preset.parallel_workers)),
         "use_onnx_gpu": gr.update(value=bool(preset.use_onnx_gpu)),
+        "onnx_threads": gr.update(value=int(preset.onnx_threads)),
+        "inference_batch_size": gr.update(value=int(preset.inference_batch_size)),
+        "ode_solver": gr.update(value=str(preset.ode_solver)),
+        "pipeline_overlap": gr.update(value=bool(preset.pipeline_overlap)),
         "preset_status": (
             f"Đã tải preset **{preset.name}**"
             + (f" — {preset.description}" if preset.description else "")

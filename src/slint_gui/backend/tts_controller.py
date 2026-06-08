@@ -60,6 +60,9 @@ class SlintGuiState:
     synth_t_shift: float = 0.5
     parallel_workers: int = 1
     use_onnx_gpu: bool = field(default_factory=is_onnx_gpu_env)
+    inference_batch_size: int = 1
+    ode_solver: str = "euler"
+    pipeline_overlap: bool = True
 
 
 class TTSController:
@@ -163,6 +166,9 @@ class TTSController:
             use_onnx_gpu=s.use_onnx_gpu,
             ode_seed=42,
             use_fixed_seed=True,
+            ode_solver=s.ode_solver,
+            inference_batch_size=s.inference_batch_size,
+            pipeline_overlap=s.pipeline_overlap,
         )
 
     @property

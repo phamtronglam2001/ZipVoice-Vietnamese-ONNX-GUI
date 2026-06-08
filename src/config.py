@@ -228,6 +228,40 @@ def gpu_max_parallel_workers() -> int:
     return _env_int("ZIPVOICE_GPU_MAX_WORKERS", 1, minimum=1, maximum=cap)
 
 
+def onnx_num_threads() -> int:
+    """
+    ORT intra/inter op threads per InferenceSession.
+
+    Default: physical core count (capped at 16). Override: ZIPVOICE_ONNX_THREADS.
+    """
+    cap = os.cpu_count() or 4
+    default = min(cap, 16)
+    return _env_int("ZIPVOICE_ONNX_THREADS", default, minimum=1, maximum=cap)
+
+
+def inference_batch_size() -> int:
+    """
+    Chunks per ONNX batch on GPU sequential path.
+
+    Default 1. Override: ZIPVOICE_INFERENCE_BATCH (2–8 typical when VRAM allows).
+    """
+    return _env_int("ZIPVOICE_INFERENCE_BATCH", 1, minimum=1, maximum=32)
+
+
+def ode_solver_default() -> str:
+    """ODE integrator: euler | heun | midpoint. Override: ZIPVOICE_ODE_SOLVER."""
+    raw = os.environ.get("ZIPVOICE_ODE_SOLVER", "euler").strip().lower()
+    if raw in {"euler", "heun", "midpoint"}:
+        return raw
+    return "euler"
+
+
+def pipeline_overlap_enabled() -> bool:
+    """Pre-tokenize next chunk on CPU while GPU runs fm_decoder."""
+    raw = os.environ.get("ZIPVOICE_PIPELINE_OVERLAP", "1").strip().lower()
+    return raw not in {"0", "false", "no"}
+
+
 def _is_lfs_pointer(path: Path) -> bool:
     """True when *path* is a Git LFS stub, not real model bytes."""
     if not path.is_file():

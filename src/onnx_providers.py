@@ -280,7 +280,7 @@ def resolve_ort_providers(use_gpu: bool) -> tuple[list[ProviderEntry], str]:
     """
     Build ORT provider list for InferenceSession.
 
-    Priority when use_gpu: CUDA → DirectML (Windows) → CPU.
+    Priority when use_gpu: TensorRT (optional) → CUDA → DirectML (Windows) → CPU.
     Returns (providers, label) where label describes the preferred accelerator.
     """
     if is_force_cpu() or not use_gpu:

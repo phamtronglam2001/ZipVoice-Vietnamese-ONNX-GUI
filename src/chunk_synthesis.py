@@ -8,13 +8,20 @@ import gc
 import logging
 import os
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
 import numpy as np
 
-from config import cpu_max_parallel_workers, gpu_max_parallel_workers, is_force_cpu
+from config import (
+    cpu_max_parallel_workers,
+    gpu_max_parallel_workers,
+    inference_batch_size,
+    is_force_cpu,
+    pipeline_overlap_enabled,
+)
 from status_log import StatusLog
 from audio.ref_audio import preprocess_ref_audio_text
 from text.chunking import TtsChunk
@@ -130,6 +137,10 @@ def _notify_status(status_log: StatusLog | None, on_status: Callable[[], None] |
         on_status()
 
 
+def _tokenize_text(engine, text: str) -> list[list[int]]:
+    return engine.tokenizer.texts_to_token_ids([text])
+
+
 def iter_synthesize_tts_chunks(
     *,
     engine,
@@ -148,6 +159,9 @@ def iter_synthesize_tts_chunks(
     use_onnx_gpu: bool = False,
     ode_seed: int = 42,
     use_fixed_seed: bool = True,
+    ode_solver: str | None = None,
+    inference_batch_size_param: int | None = None,
+    pipeline_overlap: bool | None = None,
     progress: ProgressFn | None = None,
     status_log: StatusLog | None = None,
     on_status: Callable[[], None] | None = None,
@@ -191,6 +205,14 @@ def iter_synthesize_tts_chunks(
         show_info=_ref_show_info,
     )
     prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
+    engine.prepare_prompt(prompt_normalized, ref_audio)
+
+    batch_size = max(1, int(inference_batch_size_param or inference_batch_size()))
+    overlap = (
+        pipeline_overlap_enabled()
+        if pipeline_overlap is None
+        else bool(pipeline_overlap)
+    )
 
     if status_log is not None:
         status_log.info(f"prompt_normalized_len={len(prompt_normalized)} ký tự")
@@ -298,6 +320,9 @@ def iter_synthesize_tts_chunks(
             engine=engine,
             ode_seed=ode_seed,
             use_fixed_seed=use_fixed_seed,
+            ode_solver=ode_solver,
+            inference_batch_size=batch_size,
+            pipeline_overlap=overlap,
             total=total,
             progress=progress,
             status_log=status_log,
@@ -352,6 +377,9 @@ def synthesize_tts_chunks(
     use_onnx_gpu: bool = False,
     ode_seed: int = 42,
     use_fixed_seed: bool = True,
+    ode_solver: str | None = None,
+    inference_batch_size_param: int | None = None,
+    pipeline_overlap: bool | None = None,
     progress: ProgressFn | None = None,
     status_log: StatusLog | None = None,
 ) -> ChunkSynthResult:
@@ -384,6 +412,9 @@ def synthesize_tts_chunks(
         use_onnx_gpu=use_onnx_gpu,
         ode_seed=ode_seed,
         use_fixed_seed=use_fixed_seed,
+        ode_solver=ode_solver,
+        inference_batch_size_param=inference_batch_size_param,
+        pipeline_overlap=pipeline_overlap,
         progress=progress,
         status_log=status_log,
         result_holder=holder,
@@ -405,61 +436,149 @@ def _iter_sequential(
     engine,
     ode_seed: int,
     use_fixed_seed: bool,
+    ode_solver: str | None,
+    inference_batch_size: int,
+    pipeline_overlap: bool,
     total: int,
     progress: ProgressFn,
     status_log: StatusLog | None = None,
     on_status: Callable[[], None] | None = None,
 ) -> Iterator[None]:
     done = total - len(pending)
-    for i, normalized in pending:
-        chunk_label = f"Chunk {i + 1}/{total} ({len(normalized)} ký tự)"
-        if status_log is not None:
-            status_log.info(f"Bắt đầu {chunk_label}")
-            _notify_status(status_log, on_status)
-            yield None
-        progress(
-            (done + 1) / total,
-            desc=f"Đang tổng hợp đoạn {i + 1}/{total} (ONNX)...",
-        )
-        t_chunk = time.perf_counter()
-        wav = engine.generate(
-            prompt_text=prompt_normalized,
-            prompt_wav=ref_audio,
-            text=normalized,
-            speed=speed,
-            num_step=int(num_step),
-            guidance_scale=float(guidance_scale),
-            t_shift=float(t_shift),
-            ode_seed=ode_seed,
-            use_fixed_seed=use_fixed_seed,
-            chunk_index=i,
-        )
-        if wav.size == 0:
-            msg = (
-                f"Bỏ qua {chunk_label}: wav rỗng (0 mel frames)"
-            )
-            logger.warning(
-                "skip chunk %d/%d (%d chars): empty wav (0 mel frames)",
-                i + 1,
-                total,
-                len(normalized),
-            )
+    batch_size = max(1, inference_batch_size)
+    use_batch = batch_size > 1
+
+    executor: ThreadPoolExecutor | None = None
+    token_future: Future | None = None
+
+    if pipeline_overlap and not use_batch:
+        executor = ThreadPoolExecutor(max_workers=1)
+
+    try:
+        idx = 0
+        while idx < len(pending):
+            if use_batch:
+                batch = pending[idx : idx + batch_size]
+                indices = [i for i, _ in batch]
+                texts = [norm for _, norm in batch]
+                chunk_label = (
+                    f"Batch {indices[0] + 1}-{indices[-1] + 1}/{total} "
+                    f"({len(texts)} chunks)"
+                )
+                if status_log is not None:
+                    status_log.info(f"Bắt đầu {chunk_label}")
+                    _notify_status(status_log, on_status)
+                    yield None
+                progress(
+                    (done + len(indices)) / total,
+                    desc=f"Đang tổng hợp batch {indices[0] + 1}-{indices[-1] + 1}/{total}...",
+                )
+                t_chunk = time.perf_counter()
+                result = engine.generate_batch(
+                    prompt_text=prompt_normalized,
+                    prompt_wav=ref_audio,
+                    texts=texts,
+                    speed=speed,
+                    num_step=int(num_step),
+                    guidance_scale=float(guidance_scale),
+                    t_shift=float(t_shift),
+                    ode_seed=ode_seed,
+                    use_fixed_seed=use_fixed_seed,
+                    chunk_indices=indices,
+                    use_prompt_cache=True,
+                    ode_solver=ode_solver,
+                )
+                for bi, chunk_i in enumerate(indices):
+                    wav = result.waveforms[bi]
+                    if wav.size == 0:
+                        msg = f"Bỏ qua Chunk {chunk_i + 1}/{total}: wav rỗng"
+                        logger.warning(msg)
+                        if status_log is not None:
+                            status_log.warn(msg)
+                            _notify_status(status_log, on_status)
+                            yield None
+                    elif status_log is not None:
+                        status_log.info(
+                            f"Xong Chunk {chunk_i + 1}/{total} — {wav.size} samples"
+                        )
+                    wave_parts[chunk_i] = wav
+                if status_log is not None and result.waveforms:
+                    status_log.info(
+                        f"Xong {chunk_label} ({time.perf_counter() - t_chunk:.2f}s)"
+                    )
+                    _notify_status(status_log, on_status)
+                    yield None
+                done += len(indices)
+                idx += len(batch)
+                if is_force_cpu():
+                    gc.collect()
+                continue
+
+            chunk_i, normalized = pending[idx]
+            chunk_label = f"Chunk {chunk_i + 1}/{total} ({len(normalized)} ký tự)"
             if status_log is not None:
-                status_log.warn(msg)
+                status_log.info(f"Bắt đầu {chunk_label}")
                 _notify_status(status_log, on_status)
                 yield None
-        elif status_log is not None:
-            status_log.info(
-                f"Xong {chunk_label} — {wav.size} samples "
-                f"({time.perf_counter() - t_chunk:.2f}s)"
+            progress(
+                (done + 1) / total,
+                desc=f"Đang tổng hợp đoạn {chunk_i + 1}/{total} (ONNX)...",
             )
-            _notify_status(status_log, on_status)
-            yield None
-        wave_parts[i] = wav
-        del wav
-        done += 1
-        if is_force_cpu():
-            gc.collect()
+            t_chunk = time.perf_counter()
+
+            pre_tokens = None
+            if token_future is not None:
+                pre_tokens = token_future.result()
+
+            if pipeline_overlap and executor is not None and idx + 1 < len(pending):
+                next_norm = pending[idx + 1][1]
+                token_future = executor.submit(_tokenize_text, engine, next_norm)
+            else:
+                token_future = None
+
+            wav = engine.generate(
+                prompt_text=prompt_normalized,
+                prompt_wav=ref_audio,
+                text=normalized,
+                speed=speed,
+                num_step=int(num_step),
+                guidance_scale=float(guidance_scale),
+                t_shift=float(t_shift),
+                ode_seed=ode_seed,
+                use_fixed_seed=use_fixed_seed,
+                chunk_index=chunk_i,
+                use_prompt_cache=True,
+                ode_solver=ode_solver,
+                pre_tokens=pre_tokens,
+            )
+            if wav.size == 0:
+                msg = f"Bỏ qua {chunk_label}: wav rỗng (0 mel frames)"
+                logger.warning(
+                    "skip chunk %d/%d (%d chars): empty wav (0 mel frames)",
+                    chunk_i + 1,
+                    total,
+                    len(normalized),
+                )
+                if status_log is not None:
+                    status_log.warn(msg)
+                    _notify_status(status_log, on_status)
+                    yield None
+            elif status_log is not None:
+                status_log.info(
+                    f"Xong {chunk_label} — {wav.size} samples "
+                    f"({time.perf_counter() - t_chunk:.2f}s)"
+                )
+                _notify_status(status_log, on_status)
+                yield None
+            wave_parts[chunk_i] = wav
+            del wav
+            done += 1
+            idx += 1
+            if is_force_cpu():
+                gc.collect()
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True)
 
 
 def _iter_parallel(

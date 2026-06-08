@@ -110,6 +110,26 @@ Chunk 1/7 (92 chars, pause_after=0.65s, paragraph)
 
 No mid-wave char-ratio cut or VAD.
 
+## Inference performance
+
+Per chunk: `text_encoder` ×1 → `fm_decoder` × `num_step` (ODE) → `vocoder` ×1 → librosa ISTFT.
+
+| Lever | Where | Env / GUI |
+|-------|--------|-----------|
+| Profile stages | `scripts/profile_inference.py` | `--gpu --batch 4` |
+| ORT graph opt + threads | `onnx_session_opts.build_session_options()` | `ZIPVOICE_ONNX_THREADS`, Gradio **Hiệu năng** |
+| Prompt cache | `OnnxTTSEngine.prepare_prompt()` | automatic in `chunk_synthesis` |
+| GPU batching | `OnnxTTSEngine.generate_batch()` | `ZIPVOICE_INFERENCE_BATCH`, Gradio **Batch size** |
+| ODE solver | `euler` / `heun` / `midpoint` | `ZIPVOICE_ODE_SOLVER`, Gradio **ODE solver** |
+| CPU overlap | pre-tokenize next chunk | `ZIPVOICE_PIPELINE_OVERLAP=1` |
+INT4 MatMulNBits may run on CPU even khi GPU đã bật — profile trước; nếu `fm_decoder` chạy CPU thì cần nâng cấp onnxruntime-gpu hoặc chấp nhận chạy CPU-only.
+
+```bat
+set PYTHONPATH=src
+python scripts/profile_inference.py --gpu --quant int4 --batch 4
+python scripts/diagnose_gpu.py
+```
+
 ## Imports (migration from old `utils.py`)
 
 | Old | New |
@@ -126,13 +146,13 @@ From repo root (venv active or `.venv\Scripts\python.exe`):
 
 ```bat
 set PYTHONPATH=src
-python -m unittest test_normalize_pipeline -v
+python -m unittest test_normalize_pipeline test_inference_perf -v
 ```
 
 PowerShell:
 
 ```powershell
-$env:PYTHONPATH="src"; python -m unittest test_normalize_pipeline -v
+$env:PYTHONPATH="src"; python -m unittest test_normalize_pipeline test_inference_perf -v
 ```
 
 Both `test_normalize_pipeline` and `src.test_normalize_pipeline` work with `PYTHONPATH=src`.

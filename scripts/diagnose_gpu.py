@@ -69,6 +69,10 @@ def _env_flags() -> None:
         "CUDA_VISIBLE_DEVICES",
         "ZIPVOICE_GPU_MAX_WORKERS",
         "ZIPVOICE_CPU_MAX_WORKERS",
+        "ZIPVOICE_ONNX_THREADS",
+        "ZIPVOICE_INFERENCE_BATCH",
+        "ZIPVOICE_ODE_SOLVER",
+        "ZIPVOICE_PIPELINE_OVERLAP",
     )
     for key in keys:
         val = os.environ.get(key)

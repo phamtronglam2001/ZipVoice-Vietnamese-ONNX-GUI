@@ -8,6 +8,7 @@ Extracted from app.infer_tts so GUI layers only handle presentation and I/O.
 
 from __future__ import annotations
 import logging
+import os
 import traceback
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -120,6 +121,14 @@ class TTSRequest:
     ode_seed: int = 42
 
     use_fixed_seed: bool = True
+
+    ode_solver: str = "euler"
+
+    inference_batch_size: int = 1
+
+    onnx_threads: int = 0
+
+    pipeline_overlap: bool = True
 
 @dataclass
 
@@ -615,6 +624,9 @@ def iter_tts_pipeline(
 
         log.stage_begin("Load ONNX engine")
 
+        if int(req.onnx_threads) > 0:
+            os.environ["ZIPVOICE_ONNX_THREADS"] = str(int(req.onnx_threads))
+
         engine = OnnxTTSEngine.get(
 
             quant_mode=req.onnx_quant_mode,
@@ -698,6 +710,12 @@ def iter_tts_pipeline(
                 ode_seed=int(req.ode_seed),
 
                 use_fixed_seed=bool(req.use_fixed_seed),
+
+                ode_solver=req.ode_solver,
+
+                inference_batch_size_param=int(req.inference_batch_size),
+
+                pipeline_overlap=bool(req.pipeline_overlap),
 
                 progress=prog,
 
