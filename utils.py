@@ -244,6 +244,19 @@ def _merge_tiny_chunks(
                 f"({len(text)} ký tự) «{_preview_chunk_text(text, 40)}» "
                 f"vào chunk trước → «{_preview_chunk_text(new_text)}»"
             )
+        elif (
+            merged
+            and _is_too_short_for_synthesis(text)
+            and not ch.is_chapter_break
+            and _should_not_merge_into(merged[-1])
+        ):
+            _log(
+                "Giữ chunk ngắn "
+                f"({len(text)} ký tự) «{_preview_chunk_text(text, 40)}» "
+                f"— không gộp vào chunk trước (nghỉ đoạn/chương "
+                f"{merged[-1].pause_after}s)"
+            )
+            merged.append(ch)
         else:
             merged.append(ch)
 
@@ -255,6 +268,14 @@ def _merge_tiny_chunks(
         ch = merged[i]
         text = ch.text.strip()
         if _is_too_short_for_synthesis(text) and not ch.is_chapter_break:
+            if _should_not_merge_into(ch):
+                _log(
+                    "Giữ chunk ngắn "
+                    f"({len(text)} ký tự) «{_preview_chunk_text(text, 40)}» "
+                    f"— không gộp qua nghỉ đoạn/chương ({ch.pause_after}s)"
+                )
+                i += 1
+                continue
             nxt = merged[i + 1]
             new_text = f"{ch.text} {nxt.text}".strip()
             merged[i + 1] = TtsChunk(

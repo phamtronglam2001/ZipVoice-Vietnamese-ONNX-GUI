@@ -37,25 +37,44 @@ class NormalizePipelineTests(unittest.TestCase):
         doc = normalize_full_document(raw, pipe)
         merge_log: list[str] = []
         chunks = split_text_for_tts(doc, max_chars=135, merge_log=merge_log)
-        self.assertEqual(len(chunks), 1)
-        self.assertIn("một.", chunks[0].text)
-        self.assertIn("đọc đoạn văn", chunks[0].text)
-        self.assertGreaterEqual(len(merge_log), 1)
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].text.strip(), "một.")
+        self.assertIn("đọc đoạn văn", chunks[1].text)
+        self.assertTrue(chunks[0].is_paragraph_end)
+        self.assertGreater(chunks[0].pause_after, 0.0)
+        self.assertTrue(any("không gộp" in m for m in merge_log))
 
-    def test_tiny_orphan_merged_forward(self):
+    def test_paragraph_orphan_not_merged_across_break(self):
         merge_log: list[str] = []
         chunks = split_text_for_tts("một.\nđọc đoạn văn", max_chars=135, merge_log=merge_log)
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].text.strip(), "một. đọc đoạn văn")
-        self.assertGreaterEqual(len(merge_log), 1)
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].text.strip(), "một.")
+        self.assertEqual(chunks[1].text.strip(), "đọc đoạn văn")
+        self.assertTrue(chunks[0].is_paragraph_end)
+        self.assertGreater(chunks[0].pause_after, 0.0)
+        self.assertTrue(any("không gộp" in m for m in merge_log))
 
-    def test_paragraph_orphan_merged_forward(self):
+    def test_paragraph_orphan_preserved_with_next_block(self):
         merge_log: list[str] = []
         raw = "word word word word word word word word word word.\nmột.\nmore text here please"
         chunks = split_text_for_tts(raw, max_chars=135, merge_log=merge_log)
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(chunks[1].text.strip(), "một. more text here please")
-        self.assertGreaterEqual(len(merge_log), 1)
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[1].text.strip(), "một.")
+        self.assertEqual(chunks[2].text.strip(), "more text here please")
+        self.assertTrue(chunks[1].is_paragraph_end)
+        self.assertTrue(any("không gộp" in m for m in merge_log))
+
+    def test_short_paragraph_line_keeps_pause(self):
+        merge_log: list[str] = []
+        for raw in ("một.\nví dụ", "một.\n\nví dụ"):
+            with self.subTest(raw=raw):
+                chunks = split_text_for_tts(raw, max_chars=135, merge_log=merge_log)
+                self.assertEqual(len(chunks), 2, raw)
+                self.assertEqual(chunks[0].text.strip(), "một.")
+                self.assertEqual(chunks[1].text.strip(), "ví dụ")
+                self.assertTrue(chunks[0].is_paragraph_end)
+                self.assertGreater(chunks[0].pause_after, 0.0)
+                self.assertEqual(chunks[-1].pause_after, 0.0)
 
     def test_newline_sentence_adds_period(self):
         raw = "Chương 1\nNội dung"
