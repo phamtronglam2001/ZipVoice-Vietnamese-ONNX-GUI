@@ -10,8 +10,10 @@ models/vocoder/.cache/
 output/*
 !output/.gitkeep
 *.png
+!docs/screenshot.png
 *.mp3
 !assets/sample_audio/*.mp3
+!docs/demo/*.mp3
 .install_mode
 logs/
 .gradio/

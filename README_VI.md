@@ -122,18 +122,21 @@ run_gui.bat
 
 ![Gradio GUI](docs/screenshot.png)
 
-| Mẫu | |
-|-----|---|
-| **Giọng mẫu** | [▶ `docs/demo/ref_voice.mp3`](docs/demo/ref_voice.mp3) |
-| **Transcript** | *Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.* |
-| **Văn bản cần đọc** | [`docs/demo/sample_text.txt`](docs/demo/sample_text.txt) |
-| **Output TTS** | [▶ `docs/demo/output.wav`](docs/demo/output.wav) |
+#### Giọng mẫu
 
-> Thả `docs/screenshot.png`, `docs/demo/ref_voice.mp3`, `docs/demo/output.wav` — README tự hiển thị. Xem [`docs/demo/README.md`](docs/demo/README.md).
+<audio controls src="docs/demo/ref_voice.mp3"></audio>
 
-**Ví dụ văn bản đầu vào:**
+> **Transcript:** *Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.*
 
-> Tiếng Việt là tiếng nói thiêng liêng và giàu đẹp của dân tộc Việt Nam. Vẻ đẹp của tiếng Việt trước hết thể hiện ở âm thanh giàu nhạc tính với những thanh điệu trầm bổng, khiến lời nói nghe như một khúc hát dịu dàng.
+#### Văn bản cần đọc
+
+> Tiếng Việt là tiếng nói thiêng liêng và giàu đẹp của dân tộc Việt Nam. Vẻ đẹp của tiếng Việt trước hết thể hiện ở âm thanh giàu nhạc tính với những thanh điệu trầm bổng, khiến lời nói nghe như một khúc hát dịu dàng. Không chỉ đẹp, tiếng Việt còn rất giàu với vốn từ phong phú, có thể diễn đạt mọi cung bậc cảm xúc của con người. Những từ láy, từ tượng thanh, tượng hình làm cho lời văn trở nên sinh động và giàu hình ảnh. Qua thời gian, tiếng Việt ngày càng phát triển và khẳng định sức sống mạnh mẽ. Vì vậy, mỗi chúng ta cần yêu quý và giữ gìn sự trong sáng của tiếng mẹ đẻ.
+
+#### Output TTS
+
+<audio controls src="docs/demo/output.wav"></audio>
+
+> Tạo lại bộ demo: [`docs/demo/README.md`](docs/demo/README.md)
 
 ### Các tab Gradio
 
