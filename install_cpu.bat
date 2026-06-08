@@ -24,13 +24,9 @@ echo  ============================================================
 
 echo   ZipVoice model     = ONNX Runtime
 
-echo   Vocos vocoder      = PyTorch Vocos (default, khuyen dung)
-
-echo   Vocoder ONNX       = optional fallback (wetdog + librosa ISTFT)
-
+echo   Vocos vocoder      = Vocos ONNX 100 mel + librosa ISTFT (export PyTorch GUI)
 echo   Model weights      = bundled in models/ (Git LFS)
-
-echo   PyTorch vocoder DL = python download_models.py --pytorch-vocoder
+echo   Vocoder verify     = local models/vocoder/mel_spec_24khz.onnx (100 mel)
 
 echo  ============================================================
 
@@ -53,6 +49,25 @@ if errorlevel 1 (
 
 
 if not exist ".venv\Scripts\python.exe" (
+    set "RECREATE_VENV=1"
+) else if not exist ".venv\pyvenv.cfg" (
+    echo [WARN] Broken .venv ^(missing pyvenv.cfg^) — recreating...
+    rmdir /s /q ".venv" 2>nul
+    set "RECREATE_VENV=1"
+) else (
+    .venv\Scripts\python.exe --version >nul 2>&1
+    if errorlevel 1 (
+        echo [WARN] Broken .venv ^(python not runnable^) — recreating...
+        rmdir /s /q ".venv" 2>nul
+        set "RECREATE_VENV=1"
+    ) else (
+        set "RECREATE_VENV=0"
+    )
+)
+
+if "!RECREATE_VENV!"=="1" (
+
+    if exist ".venv" rmdir /s /q ".venv" 2>nul
 
     echo [1/4] Creating venv with uv...
 
@@ -88,7 +103,7 @@ if not exist "%PY%" (
 
 
 
-echo [2/4] Runtime (onnxruntime, gradio, torch/vocos, librosa...)...
+echo [2/4] Runtime (onnxruntime, gradio, librosa...)...
 
 set /p USE_GPU="Co GPU NVIDIA CUDA? (y/N): "
 
@@ -126,21 +141,25 @@ if errorlevel 1 goto :fail
 
 echo.
 
-echo Verifying bundled model weights...
+echo Kiem tra file ONNX bundled ^(ZipVoice int4/int8 + vocoder 100 mel^)...
+echo   - models/onnx/: text_encoder_*.onnx, fm_decoder_*.onnx, model.json, tokens.txt
+echo   - models/vocoder/mel_spec_24khz.onnx ^(100 mel, export ZipVoice-Vietnamese-GUI^)
+echo   - Phat hien stub Git LFS ^(chua git lfs pull^) cung tinh la thieu
 
-"%PY%" -c "from config import models_ready, pytorch_vocoder_ready; import sys; sys.exit(0 if models_ready() else 1)"
+"%PY%" -c "from config import models_ready, models_ready_report; import sys; missing=models_ready_report(); [print('  MISSING:', x) for x in missing]; sys.exit(0 if models_ready() else 1)"
 
 if errorlevel 1 (
 
-    echo [WARN] Some model files missing. Try: git lfs pull
-
-    echo        PyTorch vocoder: python download_models.py --pytorch-vocoder
-
-    echo        ONNX vocoder fallback: python download_models.py --onnx-vocoder
+    echo [WARN] Thieu hoac chua pull file model ^(xem dong MISSING phia tren^).
+    echo        ZipVoice ONNX: git lfs pull  ^(hoac copy export tu PyTorch GUI^)
+    echo        Vocoder 100 mel: dat tai models/vocoder/mel_spec_24khz.onnx
+    echo        ^(export ZipVoice-Vietnamese-GUI — Tab Export -^> Export Vocos ONNX^)
 
     goto :fail
 
 )
+
+echo [OK] File ONNX bundled da san sang.
 
 
 
@@ -148,20 +167,26 @@ echo !INSTALL_MODE!>"%CD%\.install_mode"
 
 
 
-"%PY%" -c "import onnxruntime; import onnx_engine; print('OK | onnxruntime', onnxruntime.__version__, '| vocoder=PyTorch Vocos (default)')"
+"%PY%" -c "import onnxruntime; import onnx_engine; print('OK | onnxruntime', onnxruntime.__version__, '| vocoder=Vocos ONNX 100 mel + librosa ISTFT')"
+
+if /i "!INSTALL_MODE!"=="gpu" (
+    "%PY%" -c "import onnxruntime as ort; from onnx_providers import ensure_cuda_runtime_on_path, is_cuda_execution_provider_loadable, provider_status_message; ensure_cuda_runtime_on_path(); eps=ort.get_available_providers(); print('OK | EPs:', eps); assert 'CUDAExecutionProvider' in eps or 'DmlExecutionProvider' in eps, 'No GPU EP — check CUDA/driver'"
+    if errorlevel 1 goto :fail
+    "%PY%" -c "from onnx_providers import ensure_cuda_runtime_on_path, is_cuda_execution_provider_loadable, provider_status_message; ensure_cuda_runtime_on_path(); ok=is_cuda_execution_provider_loadable(); print('CUDA loadable:', ok, '|', provider_status_message(True)); print('[WARN] CUDA DLL chua san sang — app van chay CPU khi bat GPU.' if not ok else '[OK] CUDA runtime DLL san sang.')"
+)
 
 
 
 echo.
 
 echo  === Install complete ===
-echo  Chay GUI: run_gui.bat  -^>  http://127.0.0.1:7862
 if /i "!INSTALL_MODE!"=="gpu" (
-    echo  GPU: bat dau GUI, bat "Dung GPU" hoac set ZIPVOICE_ONNX_GPU=1
+    echo  GPU install: run_gpu.bat hoac run_gui.bat  -^>  http://127.0.0.1:7862
+    echo  ^(GPU tu bat ZIPVOICE_ONNX_GPU=1^)
 ) else (
-    echo  CPU-only. GPU: chay install_gpu.bat hoac install_cpu.bat ^(Y^) hoac pip install onnxruntime-gpu
+    echo  CPU install: run_cpu.bat hoac run_gui.bat  -^>  http://127.0.0.1:7862
+    echo  GPU: chay install_gpu.bat hoac install_cpu.bat ^(Y^)
 )
-echo  (run_cpu.bat = alias cu, tuong duong run_gui.bat)
 
 echo.
 

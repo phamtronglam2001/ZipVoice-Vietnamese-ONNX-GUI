@@ -1,5 +1,8 @@
 """
-Build quantized ONNX variants from existing FP32 baseline in models/onnx/.
+Build quantized ONNX variants from unquantized export in models/onnx/.
+
+Requires text_encoder.onnx + fm_decoder.onnx as build input (from PyTorch GUI export).
+These baseline files are removed by default after quant — only int4/int8 are kept.
 
 Usage:
   .venv\\Scripts\\python quantize_onnx.py --mode int4
@@ -13,47 +16,46 @@ import sys
 from config import ONNX_DIR
 from onnx_quant import (
     QUANT_MODE_CHOICES,
+    baseline_filename,
     export_quant_variants,
     format_sizes,
-    needed_fp32_baselines,
     onnx_filenames,
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Quantize FP32 ONNX models in models/onnx/")
-    parser.add_argument(
-        "--mode",
-        choices=[m for m in QUANT_MODE_CHOICES if m not in ("fp32", "mixed")],
-        default="int4",
-        help="Quant mode to build from FP32 baseline (default: int4)",
+    parser = argparse.ArgumentParser(
+        description="Quantize unquantized ONNX exports in models/onnx/ to int4 or int8"
     )
     parser.add_argument(
-        "--keep-fp32",
+        "--mode",
+        choices=list(QUANT_MODE_CHOICES),
+        default="int8",
+        help="Quant mode to build (default: int8)",
+    )
+    parser.add_argument(
+        "--keep-baseline",
         action="store_true",
-        help="Giữ text_encoder.onnx + fm_decoder.onnx sau khi quant (mặc định: xóa nếu không cần inference)",
+        help="Giữ text_encoder.onnx + fm_decoder.onnx sau khi quant (mặc định: xóa)",
     )
     args = parser.parse_args()
 
-    for base in ("text_encoder.onnx", "fm_decoder.onnx"):
-        if not (ONNX_DIR / base).is_file():
-            print(f"[ERROR] Missing FP32 baseline: {ONNX_DIR / base}")
-            print("Export FP32 from PyTorch GUI first, or copy models/onnx/ from export repo.")
+    for comp in ("text_encoder", "fm_decoder"):
+        base = ONNX_DIR / baseline_filename(comp)
+        if not base.is_file():
+            print(f"[ERROR] Missing baseline export: {base}")
+            print("Export from PyTorch GUI first, or copy models/onnx/ from export repo.")
             return 1
 
-    keep_fp32 = args.keep_fp32
-    print(f"Quantizing mode={args.mode} in {ONNX_DIR} (keep_fp32={keep_fp32}) ...")
+    keep_baseline = args.keep_baseline
+    print(f"Quantizing mode={args.mode} in {ONNX_DIR} (keep_baseline={keep_baseline}) ...")
     created = export_quant_variants(
         ONNX_DIR,
         args.mode,  # type: ignore[arg-type]
-        keep_fp32_baseline=keep_fp32,
+        keep_baseline=keep_baseline,
     )
-    if not keep_fp32:
-        needed = needed_fp32_baselines(args.mode)
-        if needed:
-            print(f"FP32 intermediate removed; kept: {', '.join(sorted(needed))}")
-        else:
-            print(f"FP32 intermediate removed; shipped {args.mode} only.")
+    if not keep_baseline:
+        print(f"Baseline exports removed; shipped {args.mode} only.")
     te, fm = onnx_filenames(args.mode)
     print(f"Created: {', '.join(created)}")
     print(f"Inference files: {format_sizes(ONNX_DIR, (te, fm))}")

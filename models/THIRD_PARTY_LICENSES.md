@@ -10,13 +10,13 @@ This folder contains neural network weights used for offline inference. **All we
 
 | Artifact | Path | Source | License | Redistribute in this repo? | Required attribution |
 |----------|------|--------|---------|------------------------------|----------------------|
-| ZipVoice text encoder (FP32) | `onnx/text_encoder.onnx` | Exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h) · architecture [k2-fsa/ZipVoice](https://github.com/k2-fsa/ZipVoice) | **CC-BY-NC-SA-4.0** (weights) · Apache-2.0 (upstream code) | **Yes**, non-commercial only; derivative (ONNX) must stay **NC + ShareAlike** | Credit **Nguyen Thien Hy (`hynt`)**, link to HF model, note CC-BY-NC-SA-4.0, disclose AI-generated audio |
-| ZipVoice flow-matching decoder (FP32) | `onnx/fm_decoder.onnx` | Same as above | CC-BY-NC-SA-4.0 | **Yes** (same conditions) | Same as above |
+| ZipVoice text encoder (INT4) | `onnx/text_encoder_int4.onnx` | Quantized export of hynt checkpoint | CC-BY-NC-SA-4.0 | **Yes** (same conditions) | Credit **Nguyen Thien Hy (`hynt`)**, link to HF model, note CC-BY-NC-SA-4.0, disclose AI-generated audio |
+| ZipVoice flow-matching decoder (INT4) | `onnx/fm_decoder_int4.onnx` | Quantized export of hynt checkpoint | CC-BY-NC-SA-4.0 | **Yes** (same conditions) | Same as above |
 | ZipVoice text encoder (INT8) | `onnx/text_encoder_int8.onnx` | Quantized export of hynt checkpoint | CC-BY-NC-SA-4.0 | **Yes** (same conditions) | Same as above |
 | ZipVoice flow-matching decoder (INT8) | `onnx/fm_decoder_int8.onnx` | Quantized export of hynt checkpoint | CC-BY-NC-SA-4.0 | **Yes** (same conditions) | Same as above |
 | Model config | `onnx/model.json` | From hynt checkpoint export | CC-BY-NC-SA-4.0 | **Yes** | Same as above |
 | Token table | `onnx/tokens.txt` | From hynt checkpoint / k2-fsa ZipVoice | CC-BY-NC-SA-4.0 | **Yes** | Same as above |
-| Vocos mel decoder (ONNX) | `vocoder/mel_spec_24khz.onnx` | [wetdog/vocos-mel-24khz-onnx](https://huggingface.co/wetdog/vocos-mel-24khz-onnx) · base weights [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) · architecture [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) | **MIT** (HF model cards & vocos code) | **Yes** | Include MIT copyright notice; cite Siuzdak et al. ([arXiv:2306.00814](https://arxiv.org/abs/2306.00814)) |
+| Vocos mel decoder (ONNX) | `vocoder/mel_spec_24khz.onnx` | User-bundled export from ZipVoice-Vietnamese-GUI (100 mel) · base weights [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) · architecture [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) | **MIT** (HF model cards & vocos code) | **Yes** | Include MIT copyright notice; cite Siuzdak et al. ([arXiv:2306.00814](https://arxiv.org/abs/2306.00814)) |
 
 ---
 
@@ -39,7 +39,7 @@ This repository’s [`LICENSE`](../LICENSE) is aligned with NC use. Bundling hyn
 
 ## MIT (Vocos vocoder ONNX)
 
-[wetdog/vocos-mel-24khz-onnx](https://huggingface.co/wetdog/vocos-mel-24khz-onnx) and [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) are marked **MIT** on Hugging Face. [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) source code is MIT.
+Bundled `mel_spec_24khz.onnx` is a **100-mel** export from ZipVoice-Vietnamese-GUI (aligned with ZipVoice `feat_dim`). Base PyTorch weights [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) and [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) source code are MIT.
 
 Redistribution is permitted with copyright and permission notice preserved. Commercial use of the vocoder alone may be allowed under MIT, but **combined use with hynt ZipVoice ONNX remains non-commercial** because of the NC TTS weights.
 

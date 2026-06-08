@@ -24,13 +24,16 @@ VOCODER_DIR = MODELS_DIR / "vocoder"
 ONNX_MODEL_JSON = ONNX_DIR / "model.json"
 ONNX_TOKENS = ONNX_DIR / "tokens.txt"
 
-HF_VOCODER_ONNX_REPO = "wetdog/vocos-mel-24khz-onnx"  # attribution; ONNX fallback
-HF_VOCODER_PYTORCH_REPO = "charactr/vocos-mel-24khz"  # default PyTorch vocoder weights
-HF_VOCODER_REPO = HF_VOCODER_ONNX_REPO  # backward-compatible alias
+# Vocoder ONNX: bundled local file only — export from ZipVoice-Vietnamese-GUI
+# (vocos_export.py → mel_spec_24khz.onnx, 100 mel, synced with ZipVoice feat_dim).
+# ISTFT via librosa at inference (vocos_istft.py).
+HF_VOCODER_WEIGHTS_REPO = "charactr/vocos-mel-24khz"  # attribution only (100-mel PyTorch weights)
 VOCODER_ONNX = VOCODER_DIR / "mel_spec_24khz.onnx"
 VOCODER_ONNX_FILENAME = "mel_spec_24khz.onnx"
-VOCODER_PYTORCH_CONFIG = VOCODER_DIR / "config.yaml"
-VOCODER_PYTORCH_WEIGHTS = VOCODER_DIR / "pytorch_model.bin"
+VOCODER_MEL_CHANNELS = 100
+VOCODER_RUNTIME_LABEL = "Vocos ONNX (100 mel) + librosa ISTFT"
+# Backward-compatible alias (attribution only — never auto-download).
+HF_VOCODER_REPO = HF_VOCODER_WEIGHTS_REPO
 
 
 def ensure_ffmpeg_on_path() -> None:
@@ -85,7 +88,7 @@ def onnx_quant_mode() -> str:
     Quant mode for inference.
 
     Priority: ZIPVOICE_ONNX_QUANT env → quantization.json → folder scan
-    (int4 > int8 > fp16 > fp32) → legacy ZIPVOICE_ONNX_INT8 → fp32.
+    (int4 > int8) → legacy ZIPVOICE_ONNX_INT8 → int8 (default).
     """
     from onnx_quant import resolve_default_quant_mode
 
@@ -115,74 +118,41 @@ def onnx_files(
     quant_mode: str | None = None,
     *,
     use_int8: bool | None = None,
-    mixed_config: dict | None = None,
 ) -> tuple[str, str]:
-    from onnx_quant import DEFAULT_MIXED_CONFIG, onnx_filenames, normalize_quant_mode, read_quant_manifest
-
-    if quant_mode is None and mixed_config is None:
-        manifest = read_quant_manifest(ONNX_DIR)
-        if manifest and manifest.get("mode") == "mixed":
-            mixed_config = {
-                "text_encoder": manifest.get("text_encoder", "int8"),
-                "fm_decoder": manifest.get("fm_decoder", "fp32"),
-            }
-            quant_mode = "mixed"
+    from onnx_quant import normalize_quant_mode, onnx_filenames
 
     mode = normalize_quant_mode(
         quant_mode or onnx_quant_mode(),
         use_int8=use_int8,
     )
-    mixed = mixed_config if mode == "mixed" else None
-    if mode == "mixed" and mixed is None:
-        mixed = DEFAULT_MIXED_CONFIG
-    return onnx_filenames(mode, mixed)
+    return onnx_filenames(mode)
 
 
-def _resolve_quant_context(
+def _resolve_quant_mode(
     quant_mode: str | None = None,
     *,
     use_int8: bool | None = None,
-    mixed_config: dict | None = None,
-) -> tuple[str, dict | None]:
-    from onnx_quant import DEFAULT_MIXED_CONFIG, normalize_quant_mode, read_quant_manifest
+) -> str:
+    from onnx_quant import normalize_quant_mode
 
-    if quant_mode is None and mixed_config is None:
-        manifest = read_quant_manifest(ONNX_DIR)
-        if manifest and manifest.get("mode") == "mixed":
-            mixed_config = {
-                "text_encoder": manifest.get("text_encoder", "int8"),
-                "fm_decoder": manifest.get("fm_decoder", "fp32"),
-            }
-            quant_mode = "mixed"
-
-    mode = normalize_quant_mode(
+    return normalize_quant_mode(
         quant_mode or onnx_quant_mode(),
         use_int8=use_int8,
     )
-    mixed = mixed_config if mode == "mixed" else None
-    if mode == "mixed" and mixed is None:
-        mixed = DEFAULT_MIXED_CONFIG
-    return mode, mixed
 
 
 def onnx_ready(
     quant_mode: str | None = None,
     *,
     use_int8: bool | None = None,
-    mixed_config: dict | None = None,
 ) -> bool:
-    from onnx_quant import missing_onnx_files
-
-    mode, mixed = _resolve_quant_context(
-        quant_mode, use_int8=use_int8, mixed_config=mixed_config
-    )
-    return not missing_onnx_files(ONNX_DIR, mode, mixed)
+    mode = _resolve_quant_mode(quant_mode, use_int8=use_int8)
+    return not _missing_bundled_onnx_files(ONNX_DIR, mode)
 
 
 def onnx_ready_report() -> str:
     """Markdown summary of quant variant readiness for GUI."""
     from onnx_quant import (
-        DEFAULT_MIXED_CONFIG,
         QUANT_MODE_CHOICES,
         missing_onnx_files,
         quant_readiness_hint,
@@ -209,12 +179,11 @@ def onnx_ready_report() -> str:
         )
     else:
         lines.append(
-            "- **quantization.json:** *(chưa có — auto-detect int4 > int8 > fp32 từ tên file)*"
+            "- **quantization.json:** *(chưa có — auto-detect int4 > int8 từ tên file)*"
         )
 
     for mode in QUANT_MODE_CHOICES:
-        mixed = DEFAULT_MIXED_CONFIG if mode == "mixed" else None
-        missing = missing_onnx_files(ONNX_DIR, mode, mixed)
+        missing = missing_onnx_files(ONNX_DIR, mode)
         ready = not missing
         lines.append(f"- ONNX **{mode}** ready: **{ready}**")
         if not ready:
@@ -227,8 +196,105 @@ def onnx_ready_report() -> str:
     return "\n".join(lines)
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+def cpu_max_parallel_workers() -> int:
+    """Max parallel chunk workers on CPU (ProcessPool)."""
+    cap = os.cpu_count() or 4
+    return _env_int("ZIPVOICE_CPU_MAX_WORKERS", min(8, cap), minimum=1, maximum=cap)
+
+
+def gpu_max_parallel_workers() -> int:
+    """
+    Max parallel chunk workers when each process loads ONNX on GPU.
+
+    Default 1 — each ProcessPool worker creates its own CUDA sessions (VRAM × N).
+    Override via ZIPVOICE_GPU_MAX_WORKERS only if you have spare VRAM (risk of OOM/crash).
+    """
+    cap = os.cpu_count() or 4
+    return _env_int("ZIPVOICE_GPU_MAX_WORKERS", 1, minimum=1, maximum=cap)
+
+
+def _is_lfs_pointer(path: Path) -> bool:
+    """True when *path* is a Git LFS stub, not real model bytes."""
+    if not path.is_file():
+        return False
+    if path.stat().st_size > 512:
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:200]
+    except OSError:
+        return False
+    return head.startswith("version https://git-lfs.github.com")
+
+
+def _model_file_ready(path: Path) -> bool:
+    return path.is_file() and not _is_lfs_pointer(path)
+
+
+def _missing_bundled_onnx_files(onnx_dir: Path, mode: str) -> list[str]:
+    """Return missing ONNX filenames; Git LFS pointer stubs count as missing."""
+    from onnx_quant import required_onnx_files
+
+    return [
+        name
+        for name in required_onnx_files(mode)
+        if not _model_file_ready(onnx_dir / name)
+    ]
+
+
 def vocoder_onnx_ready() -> bool:
-    return VOCODER_ONNX.is_file()
+    return _model_file_ready(VOCODER_ONNX)
+
+
+def vocoder_deploy_instructions() -> str:
+    """How to obtain mel_spec_24khz.onnx for deployment."""
+    return (
+        f"Đặt vocoder ONNX 100 mel tại `models/vocoder/{VOCODER_ONNX_FILENAME}`.\n"
+        "  • Export từ ZipVoice-Vietnamese-GUI: Tab Export → bật **Export Vocos ONNX**\n"
+        "  • Hoặc copy file đã export từ repo PyTorch sang repo ONNX-GUI\n"
+        "  • Hoặc chạy `git lfs pull` nếu file bundled trong repo\n"
+        f"  • Weights gốc (attribution): {HF_VOCODER_WEIGHTS_REPO}"
+    )
+
+
+def models_ready_report() -> list[str]:
+    """Human-readable list of missing or invalid bundled model files."""
+    missing: list[str] = []
+    mode = onnx_quant_mode()
+    for name in _missing_bundled_onnx_files(ONNX_DIR, mode):
+        path = ONNX_DIR / name
+        if _is_lfs_pointer(path):
+            missing.append(f"models/onnx/{name} (Git LFS pointer — chạy: git lfs pull)")
+        else:
+            missing.append(f"models/onnx/{name} (quant mode `{mode}`)")
+
+    if not vocoder_onnx_ready():
+        voc_path = VOCODER_ONNX
+        if _is_lfs_pointer(voc_path):
+            missing.append(
+                f"models/vocoder/{VOCODER_ONNX_FILENAME} "
+                "(Git LFS pointer — chạy: git lfs pull)"
+            )
+        else:
+            missing.append(
+                f"models/vocoder/{VOCODER_ONNX_FILENAME} "
+                "(100 mel — export ZipVoice-Vietnamese-GUI hoặc git lfs pull)"
+            )
+    return missing
 
 
 def vocoder_ready() -> bool:
@@ -236,19 +302,9 @@ def vocoder_ready() -> bool:
     return vocoder_onnx_ready()
 
 
-def pytorch_vocoder_ready() -> bool:
-    if not VOCODER_PYTORCH_CONFIG.is_file():
-        return False
-    return VOCODER_PYTORCH_WEIGHTS.is_file() or (VOCODER_DIR / "model.safetensors").is_file()
-
-
 def models_ready(
     quant_mode: str | None = None,
     *,
     use_int8: bool | None = None,
-    use_pytorch_vocoder: bool = True,
 ) -> bool:
-    onnx_ok = onnx_ready(quant_mode, use_int8=use_int8)
-    if use_pytorch_vocoder:
-        return onnx_ok and pytorch_vocoder_ready()
-    return onnx_ok and vocoder_onnx_ready()
+    return onnx_ready(quant_mode, use_int8=use_int8) and vocoder_onnx_ready()

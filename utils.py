@@ -4,8 +4,6 @@ Transcript giọng mẫu bắt buộc nhập thủ công — không auto ASR.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import re
 import tempfile
@@ -70,8 +68,11 @@ RE_CHAPTER_HEADING = re.compile(
 RE_MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+")
 RE_HR_LINE = re.compile(r"^[\-*_]{3,}\s*$")
 
-# Chunks shorter than this are merged into the previous chunk to avoid 0-frame mel.
-MIN_TTS_CHUNK_CHARS = 3
+# ZipVoice ONNX trims prompt mel frames after ODE; chunks at/below this length (or a
+# lone short word) often yield 0 mel frames or vocoder noise — merge before synthesis.
+MIN_TTS_CHUNK_CHARS = 12
+# Single-word chunks up to this length are merged even when above MIN_TTS_CHUNK_CHARS.
+MIN_TTS_SINGLE_WORD_MAX_CHARS = 16
 
 _PLACEHOLDER_PREFIX = "\x00VNPROT"
 _SENTENCE_PROTECTED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -186,13 +187,37 @@ def _should_not_merge_into(prev: TtsChunk) -> bool:
     )
 
 
+def _is_too_short_for_synthesis(text: str) -> bool:
+    """True when chunk text is likely to produce 0/noisy mel after ONNX ODE trim."""
+    t = text.strip()
+    if not t:
+        return True
+    if len(t) <= MIN_TTS_CHUNK_CHARS:
+        return True
+    words = t.split()
+    if len(words) == 1 and len(t) <= MIN_TTS_SINGLE_WORD_MAX_CHARS:
+        return True
+    return False
+
+
+def _preview_chunk_text(text: str, limit: int = 60) -> str:
+    t = text.strip()
+    return t if len(t) <= limit else f"{t[: limit - 1]}…"
+
+
 def _merge_tiny_chunks(
     chunks: list[TtsChunk],
-    min_chars: int = MIN_TTS_CHUNK_CHARS,
+    merge_log: list[str] | None = None,
 ) -> list[TtsChunk]:
-    """Gộp chunk quá ngắn vào chunk trước — tránh mel T=0 sau ODE trim."""
-    if min_chars <= 1 or len(chunks) <= 1:
+    """Gộp chunk quá ngắn vào chunk liền kề — tránh mel T=0 / noise sau ODE trim."""
+    if len(chunks) <= 1:
         return chunks
+
+    def _log(msg: str) -> None:
+        logger.info(msg)
+        if merge_log is not None:
+            merge_log.append(msg)
+
     merged: list[TtsChunk] = []
     for ch in chunks:
         text = ch.text.strip()
@@ -200,21 +225,55 @@ def _merge_tiny_chunks(
             continue
         if (
             merged
-            and len(text) < min_chars
+            and _is_too_short_for_synthesis(text)
+            and not ch.is_chapter_break
             and not _should_not_merge_into(merged[-1])
         ):
             prev = merged[-1]
+            new_text = f"{prev.text} {ch.text}".strip()
             merged[-1] = TtsChunk(
-                text=f"{prev.text} {ch.text}".strip(),
+                text=new_text,
                 pause_after=ch.pause_after,
                 is_sentence_end=ch.is_sentence_end,
                 is_paragraph_end=ch.is_paragraph_end,
                 is_chapter_break=ch.is_chapter_break,
                 is_forced_split=prev.is_forced_split,
             )
-            logger.debug("merged tiny chunk (%d chars) into previous", len(text))
+            _log(
+                "Gộp chunk ngắn "
+                f"({len(text)} ký tự) «{_preview_chunk_text(text, 40)}» "
+                f"vào chunk trước → «{_preview_chunk_text(new_text)}»"
+            )
         else:
             merged.append(ch)
+
+    if len(merged) <= 1:
+        return merged
+
+    i = 0
+    while i < len(merged) - 1:
+        ch = merged[i]
+        text = ch.text.strip()
+        if _is_too_short_for_synthesis(text) and not ch.is_chapter_break:
+            nxt = merged[i + 1]
+            new_text = f"{ch.text} {nxt.text}".strip()
+            merged[i + 1] = TtsChunk(
+                text=new_text,
+                pause_after=nxt.pause_after,
+                is_sentence_end=nxt.is_sentence_end,
+                is_paragraph_end=nxt.is_paragraph_end,
+                is_chapter_break=nxt.is_chapter_break,
+                is_forced_split=ch.is_forced_split or nxt.is_forced_split,
+            )
+            _log(
+                "Gộp chunk ngắn "
+                f"({len(text)} ký tự) «{_preview_chunk_text(text, 40)}» "
+                f"vào chunk sau → «{_preview_chunk_text(new_text)}»"
+            )
+            merged.pop(i)
+            continue
+        i += 1
+
     return merged
 
 
@@ -226,6 +285,7 @@ def split_text_for_tts(
     pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
     pause_enum_item: float = PAUSE_ENUM_DEFAULT,
     pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT,
+    merge_log: list[str] | None = None,
 ) -> list[TtsChunk]:
     """
     Chia văn bản dài cho ZipVoice:
@@ -324,7 +384,7 @@ def split_text_for_tts(
         return [TtsChunk(text=text.strip(), pause_after=0.0)]
 
     chunks[-1].pause_after = 0.0
-    return _merge_tiny_chunks(chunks)
+    return _merge_tiny_chunks(chunks, merge_log=merge_log)
 
 
 def _linear_crossfade(
@@ -654,7 +714,6 @@ NORMALIZE_ADD_CHOICES: dict[str, str] = {
 DEFAULT_NORMALIZE_PIPELINE: list[str] = []
 # Full pipeline: all add-dropdown steps, bottom-to-top UI order (sea_g2p runs first).
 AUDIOBOOK_PRESET_PIPELINE: list[str] = list(reversed(list(NORMALIZE_ADD_CHOICES)))
-CHECKPOINT_SUBDIR = "latest"
 
 _sea_g2p_normalizer = None
 
@@ -912,113 +971,6 @@ def preview_normalize_output(
             lines.append(f"… và {len(chunks) - 5} chunk nữa")
 
     return "\n".join(lines)
-
-
-def compute_tts_checkpoint_key(
-    gen_text: str,
-    norm_pipeline: list[str],
-    chunk_max_chars: int,
-    speed: float = 1.0,
-    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
-    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
-    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
-    pause_forced: float = PAUSE_FORCED_SPLIT_DEFAULT,
-    asset_voice_id: str = "",
-    input_mode: NormalizeInputMode = "raw",
-) -> str:
-    payload = {
-        "text_hash": hashlib.sha256(gen_text.encode("utf-8")).hexdigest(),
-        "pipeline": norm_pipeline,
-        "input_mode": parse_input_mode(input_mode),
-        "chunk_max_chars": int(chunk_max_chars),
-        "speed": float(speed),
-        "pause_sentence": float(pause_sentence),
-        "pause_paragraph": float(pause_paragraph),
-        "pause_chapter": float(pause_chapter),
-        "pause_forced": float(pause_forced),
-        "asset_voice_id": asset_voice_id or "",
-    }
-    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-
-
-def checkpoint_dir(output_dir: Path) -> Path:
-    return output_dir / ".checkpoints" / CHECKPOINT_SUBDIR
-
-
-def _write_checkpoint_wav(path: Path, wav: np.ndarray, sample_rate: int) -> None:
-    wav_f = wav.astype(np.float32)
-    peak = np.max(np.abs(wav_f)) if wav_f.size else 1.0
-    if peak > 1.0:
-        wav_f = wav_f / peak
-    wav_i16 = (wav_f * 32767).astype(np.int16)
-    wavfile.write(str(path), sample_rate, wav_i16)
-
-
-def _read_checkpoint_wav(path: Path) -> np.ndarray:
-    _sr, data = wavfile.read(str(path))
-    if data.ndim > 1:
-        data = data.mean(axis=1)
-    if data.dtype != np.float32:
-        data = data.astype(np.float32) / np.iinfo(data.dtype).max
-    return data
-
-
-def save_tts_checkpoint_chunk(
-    output_dir: Path,
-    chunk_index: int,
-    wav: np.ndarray,
-    sample_rate: int,
-    manifest: dict,
-) -> None:
-    ckpt = checkpoint_dir(output_dir)
-    ckpt.mkdir(parents=True, exist_ok=True)
-    chunk_path = ckpt / f"chunk_{chunk_index:03d}.wav"
-    if wav is not None and getattr(wav, "size", 0) > 0:
-        _write_checkpoint_wav(chunk_path, wav, sample_rate)
-    manifest_path = ckpt / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def load_tts_checkpoint_chunks(
-    output_dir: Path,
-    checkpoint_key: str,
-    num_chunks: int,
-) -> tuple[dict[int, np.ndarray], int]:
-    """
-    Đọc chunk wav đã lưu nếu manifest khớp.
-    Trả (map index→wav, index bắt đầu cần tổng hợp).
-    """
-    ckpt = checkpoint_dir(output_dir)
-    manifest_path = ckpt / "manifest.json"
-    if not manifest_path.is_file():
-        return {}, 0
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}, 0
-
-    if manifest.get("checkpoint_key") != checkpoint_key:
-        return {}, 0
-
-    loaded: dict[int, np.ndarray] = {}
-    resume_from = 0
-    for i in range(num_chunks):
-        chunk_path = ckpt / f"chunk_{i:03d}.wav"
-        if chunk_path.is_file():
-            wav = _read_checkpoint_wav(chunk_path)
-            if wav.size > 0:
-                loaded[i] = wav
-                resume_from = i + 1
-            else:
-                break
-        else:
-            break
-    return loaded, resume_from
 
 
 def prepare_tts_text(text: str, backend: str | list[str] = "none") -> str:

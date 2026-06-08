@@ -1,4 +1,4 @@
-# ZipVoice ONNX inference + GUI (numpy ZipVoice path; PyTorch Vocos default)
+# ZipVoice ONNX inference + GUI (numpy ZipVoice path; ONNX vocoder)
 onnxruntime>=1.18.0
 gradio>=4.44.0
 numpy>=1.24.0,<=1.26.4
@@ -6,7 +6,4 @@ scipy
 soundfile
 pydub
 librosa
-# PyTorch Vocos vocoder (default, khuyên dùng)
-torch
-torchaudio
-vocos
+# Prompt mel features (vocos_fbank.py — librosa htk=True, norm=None)

@@ -1,13 +1,15 @@
 # GPU ONNX Runtime (mutually exclusive with onnxruntime CPU package)
 # Match CUDA/cuDNN to wheel — see install_gpu.bat / install_cpu.bat notes.
 onnxruntime-gpu>=1.18.0
+# CUDA 12 runtime DLLs for Windows (no full CUDA Toolkit required)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cuda-runtime-cu12
+nvidia-cufft-cu12
 gradio>=4.44.0
 numpy>=1.24.0,<=1.26.4
 scipy
 soundfile
 pydub
 librosa
-# PyTorch Vocos vocoder (default)
-torch
-torchaudio
-vocos
+# Prompt mel features (vocos_fbank.py — librosa htk=True, norm=None)

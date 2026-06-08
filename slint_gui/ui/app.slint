@@ -1,0 +1,418 @@
+// ZipVoice Vietnamese ONNX TTS — Slint GUI (scaffold)
+import { Button, ComboBox, CheckBox, SpinBox, Slider, TabWidget, ProgressIndicator, ScrollView, LineEdit } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "ZipVoice Vietnamese ONNX TTS (Slint)";
+    preferred-width: 980px;
+    preferred-height: 820px;
+    background: #f5f6f8;
+
+    callback refresh-voices();
+    callback voice-changed(int);
+    callback synthesize-clicked();
+    callback preview-normalize-clicked();
+    callback pipeline-add-clicked();
+    callback pipeline-remove-clicked();
+    callback pipeline-up-clicked();
+    callback pipeline-down-clicked();
+    callback pipeline-reset-clicked();
+    callback pipeline-audiobook-clicked();
+    callback browse-ref-audio();
+    callback browse-gen-txt-file();
+    callback gpu-setting-changed();
+
+    in-out property <bool> busy: false;
+    in-out property <float> progress-value: 0.0;
+    in-out property <string> progress-label: "";
+
+    in-out property <[string]> voice-options: [];
+    in-out property <int> voice-index: 0;
+
+    in-out property <string> asset-info: "";
+    in-out property <string> ref-audio-path: "";
+    in-out property <string> ref-text: "";
+    in-out property <string> gen-text: "";
+    in-out property <string> gen-txt-source-path: "";
+
+    in-out property <[string]> input-mode-options: ["Văn bản gốc", "Đã chuẩn hóa (bỏ qua pipeline)"];
+    in-out property <int> input-mode-index: 0;
+
+    in-out property <float> speed-value: 1.0;
+    in-out property <[string]> export-format-options: ["WAV 24kHz"];
+    in-out property <int> export-format-index: 0;
+    in-out property <[string]> quant-mode-options: ["int8", "int4"];
+    in-out property <int> quant-mode-index: 0;
+
+    in-out property <[string]> norm-step-options: [];
+    in-out property <int> norm-step-index: 0;
+    in-out property <string> pipeline-display: "(pipeline trống)";
+    in-out property <int> pipeline-selected-index: 0;
+
+    in-out property <int> chunk-max-chars: 135;
+    in-out property <float> pause-sentence: 0.35;
+    in-out property <float> pause-paragraph: 0.65;
+    in-out property <float> pause-chapter: 2.0;
+    in-out property <float> pause-enum: 0.45;
+    in-out property <float> pause-forced: 0.28;
+
+    in-out property <bool> use-onnx-gpu: false;
+    in-out property <string> runtime-device: "";
+    in-out property <int> parallel-workers: 1;
+    in-out property <int> parallel-workers-max: 8;
+    in-out property <int> synth-num-step: 16;
+    in-out property <float> synth-guidance-scale: 1.0;
+    in-out property <float> synth-t-shift: 0.5;
+
+    in-out property <string> status-summary: "";
+    in-out property <string> status-log: "";
+    in-out property <string> norm-preview: "";
+    in-out property <string> output-file-path: "";
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: "ZipVoice Vietnamese ONNX TTS";
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        Text {
+            text: "Inference ONNX Runtime + Vocos ONNX · Giọng mẫu: assets/ · Xuất: output/";
+            font-size: 12px;
+            color: #555;
+        }
+
+        TabWidget {
+            vertical-stretch: 1;
+
+            Tab {
+                title: "Giọng & văn bản";
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            ComboBox {
+                                model: root.voice-options;
+                                current-index <=> root.voice-index;
+                                enabled: !root.busy;
+                                min-width: 280px;
+                                selected => { root.voice-changed(root.voice-index); }
+                            }
+                            Button {
+                                text: "Làm mới danh sách";
+                                enabled: !root.busy;
+                                clicked => { root.refresh-voices(); }
+                            }
+                        }
+                        Text { text: root.asset-info; font-size: 12px; color: #444; wrap: word-wrap; }
+
+                        HorizontalLayout {
+                            LineEdit {
+                                text <=> root.ref-audio-path;
+                                placeholder-text: "Đường dẫn file giọng mẫu (3–15 giây)";
+                                enabled: !root.busy;
+                            }
+                            Button {
+                                text: "Chọn file...";
+                                enabled: !root.busy;
+                                clicked => { root.browse-ref-audio(); }
+                            }
+                        }
+
+                        VerticalLayout {
+                            Text { text: "2) Nội dung TRONG file giọng mẫu (bắt buộc)"; font-weight: 600; }
+                            TextInput {
+                                text <=> root.ref-text;
+                                enabled: !root.busy;
+                                min-height: 72px;
+                            }
+                        }
+
+                        VerticalLayout {
+                            Text { text: "3) Văn bản CẦN ĐỌC (output TTS)"; font-weight: 600; }
+                            TextInput {
+                                text <=> root.gen-text;
+                                enabled: !root.busy;
+                                min-height: 160px;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            LineEdit {
+                                text <=> root.gen-txt-source-path;
+                                placeholder-text: "File .txt/.md nguồn (tùy chọn)";
+                                enabled: !root.busy;
+                            }
+                            Button {
+                                text: "Upload .txt/.md";
+                                enabled: !root.busy;
+                                clicked => { root.browse-gen-txt-file(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "Chế độ văn bản đầu vào:"; vertical-alignment: center; }
+                            ComboBox {
+                                model: root.input-mode-options;
+                                current-index <=> root.input-mode-index;
+                                enabled: !root.busy;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Chuẩn hóa & chunk";
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Pipeline chuẩn hóa — thêm bước, sắp xếp, hoặc dùng preset Sách/Audiobook.";
+                            wrap: word-wrap;
+                            font-size: 12px;
+                        }
+
+                        HorizontalLayout {
+                            ComboBox {
+                                model: root.norm-step-options;
+                                current-index <=> root.norm-step-index;
+                                enabled: !root.busy;
+                                min-width: 240px;
+                            }
+                            Button {
+                                text: "Thêm vào pipeline";
+                                enabled: !root.busy;
+                                clicked => { root.pipeline-add-clicked(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            SpinBox {
+                                value <=> root.pipeline-selected-index;
+                                enabled: !root.busy;
+                            }
+                            Button { text: "Lên"; enabled: !root.busy; clicked => { root.pipeline-up-clicked(); } }
+                            Button { text: "Xuống"; enabled: !root.busy; clicked => { root.pipeline-down-clicked(); } }
+                            Button { text: "Xóa"; enabled: !root.busy; clicked => { root.pipeline-remove-clicked(); } }
+                            Button { text: "Mặc định"; enabled: !root.busy; clicked => { root.pipeline-reset-clicked(); } }
+                            Button { text: "Preset Sách"; enabled: !root.busy; clicked => { root.pipeline-audiobook-clicked(); } }
+                        }
+
+                        Text {
+                            text: root.pipeline-display;
+                            wrap: word-wrap;
+                            font-size: 12px;
+                            color: #333;
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "Max ký tự / chunk:"; vertical-alignment: center; }
+                            SpinBox {
+                                minimum: 80;
+                                maximum: 220;
+                                value <=> root.chunk-max-chars;
+                                enabled: !root.busy;
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                Text { text: "Nghỉ câu (s)"; min-width: 120px; vertical-alignment: center; }
+                                Slider { minimum: 0.1; maximum: 1.5; value <=> root.pause-sentence; enabled: !root.busy; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Nghỉ đoạn (s)"; min-width: 120px; vertical-alignment: center; }
+                                Slider { minimum: 0.2; maximum: 2.0; value <=> root.pause-paragraph; enabled: !root.busy; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Nghỉ chương (s)"; min-width: 120px; vertical-alignment: center; }
+                                Slider { minimum: 0.5; maximum: 4.0; value <=> root.pause-chapter; enabled: !root.busy; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Nghỉ liệt kê (s)"; min-width: 120px; vertical-alignment: center; }
+                                Slider { minimum: 0.2; maximum: 2.5; value <=> root.pause-enum; enabled: !root.busy; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Nghỉ cắt phẩy (s)"; min-width: 120px; vertical-alignment: center; }
+                                Slider { minimum: 0.05; maximum: 0.8; value <=> root.pause-forced; enabled: !root.busy; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Hiệu năng & synth";
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            Text { text: "Tốc độ:"; vertical-alignment: center; }
+                            Slider {
+                                minimum: 0.3;
+                                maximum: 2.0;
+                                value <=> root.speed-value;
+                                enabled: !root.busy;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "Định dạng xuất:"; vertical-alignment: center; }
+                            ComboBox {
+                                model: root.export-format-options;
+                                current-index <=> root.export-format-index;
+                                enabled: !root.busy;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "ONNX quant mode:"; vertical-alignment: center; }
+                            ComboBox {
+                                model: root.quant-mode-options;
+                                current-index <=> root.quant-mode-index;
+                                enabled: !root.busy;
+                            }
+                        }
+
+                        CheckBox {
+                            text: "Dùng GPU (CUDA / DirectML)";
+                            checked <=> root.use-onnx-gpu;
+                            enabled: !root.busy;
+                            toggled => { root.gpu-setting-changed(); }
+                        }
+
+                        Text {
+                            text: "Thiết bị thực tế (ONNX Runtime)";
+                            font-weight: 600;
+                            font-size: 12px;
+                        }
+                        TextInput {
+                            text <=> root.runtime-device;
+                            read-only: true;
+                            min-height: 44px;
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "Workers song song:"; vertical-alignment: center; }
+                            SpinBox {
+                                minimum: 1;
+                                maximum: root.parallel-workers-max;
+                                value <=> root.parallel-workers;
+                                enabled: !root.busy;
+                            }
+                        }
+                        Text {
+                            text: root.use-onnx-gpu
+                                ? "GPU: khuyến nghị 1 worker (mỗi worker tốn VRAM riêng)."
+                                : "CPU: có thể tăng workers để tổng hợp song song.";
+                            font-size: 11px;
+                            color: #666;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            Text { text: "num_step:"; vertical-alignment: center; }
+                            SpinBox {
+                                minimum: 4;
+                                maximum: 32;
+                                value <=> root.synth-num-step;
+                                enabled: !root.busy;
+                            }
+                            Text { text: "guidance:"; vertical-alignment: center; }
+                            Slider {
+                                minimum: 0.5;
+                                maximum: 2.0;
+                                value <=> root.synth-guidance-scale;
+                                enabled: !root.busy;
+                            }
+                            Text { text: "t_shift:"; vertical-alignment: center; }
+                            Slider {
+                                minimum: 0.1;
+                                maximum: 1.0;
+                                value <=> root.synth-t-shift;
+                                enabled: !root.busy;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Kết quả & log";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+
+                    Text { text: "Tóm tắt"; font-weight: 600; }
+                    TextInput {
+                        text <=> root.status-summary;
+                        read-only: true;
+                        min-height: 100px;
+                    }
+
+                    Text { text: "File output"; font-weight: 600; }
+                    LineEdit {
+                        text <=> root.output-file-path;
+                        read-only: true;
+                    }
+
+                    Text { text: "Text đã chuẩn hóa (xem trước)"; font-weight: 600; }
+                    TextInput {
+                        text <=> root.norm-preview;
+                        read-only: true;
+                        min-height: 80px;
+                    }
+
+                    Text { text: "Nhật ký trạng thái (debug)"; font-weight: 600; }
+                    TextInput {
+                        text <=> root.status-log;
+                        read-only: true;
+                        vertical-stretch: 1;
+                        min-height: 180px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "Xem trước chuẩn hóa";
+                enabled: !root.busy;
+                clicked => { root.preview-normalize-clicked(); }
+            }
+            Button {
+                text: "Tổng hợp giọng nói ONNX";
+                primary: true;
+                enabled: !root.busy;
+                clicked => { root.synthesize-clicked(); }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            ProgressIndicator {
+                progress: root.progress-value;
+                indeterminate: root.busy && root.progress-value <= 0.0;
+                min-width: 200px;
+            }
+            Text {
+                text: root.progress-label;
+                vertical-alignment: center;
+                font-size: 12px;
+                color: #555;
+            }
+        }
+    }
+}

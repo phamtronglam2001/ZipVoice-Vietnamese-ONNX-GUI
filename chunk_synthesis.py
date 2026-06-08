@@ -14,13 +14,13 @@ from typing import Callable
 
 import numpy as np
 
-from config import is_force_cpu
+from config import cpu_max_parallel_workers, gpu_max_parallel_workers, is_force_cpu
+from status_log import StatusLog
 from utils import (
     TtsChunk,
     prepare_for_tts,
     prepare_tts_text,
     preprocess_ref_audio_text,
-    save_tts_checkpoint_chunk,
 )
 
 logger = logging.getLogger("zipvoice_onnx_gui")
@@ -30,20 +30,35 @@ _worker_engine = None
 
 def max_parallel_workers(use_gpu: bool = False) -> int:
     if use_gpu:
-        # Each worker loads full ONNX on GPU — limit VRAM use.
-        return min(2, os.cpu_count() or 2)
-    return min(8, os.cpu_count() or 4)
+        # Each worker loads full ONNX on GPU — VRAM scales with worker count.
+        return gpu_max_parallel_workers()
+    return cpu_max_parallel_workers()
 
 
-def clamp_parallel_workers(
-    workers: int,
-    use_gpu: bool = False,
-    *,
-    use_pytorch_vocoder: bool = True,
-) -> int:
-    if use_pytorch_vocoder:
-        return 1
+def ui_parallel_workers_max(use_gpu: bool = False) -> int:
+    """Slider/spinbox maximum; Gradio requires minimum strictly less than maximum."""
+    return max(2, max_parallel_workers(use_gpu=use_gpu))
+
+
+def clamp_parallel_workers(workers: int, use_gpu: bool = False) -> int:
     return min(max(1, int(workers)), max_parallel_workers(use_gpu))
+
+
+def parallel_workers_clamp_message(
+    requested: int, effective: int, use_gpu: bool = False
+) -> str:
+    """User-facing warning when parallel workers are reduced for safety."""
+    cap = max_parallel_workers(use_gpu=use_gpu)
+    if use_gpu:
+        return (
+            f"GPU: giảm workers {requested} → {effective} "
+            f"(tối đa {cap} — mỗi worker load ONNX riêng trên GPU, dễ hết VRAM/crash). "
+            "Khuyến nghị 1 worker trên GPU."
+        )
+    return (
+        f"Giảm workers {requested} → {effective} "
+        f"(CPU tối đa {cap})."
+    )
 
 
 def _worker_init(quant_mode: str, use_gpu: bool) -> None:
@@ -55,7 +70,10 @@ def _worker_init(quant_mode: str, use_gpu: bool) -> None:
     from onnx_engine import OnnxTTSEngine
 
     OnnxTTSEngine._instance = None
-    _worker_engine = OnnxTTSEngine(quant_mode=quant_mode, use_gpu=use_gpu)
+    _worker_engine = OnnxTTSEngine(
+        quant_mode=quant_mode,
+        use_gpu=use_gpu,
+    )
 
 
 def _worker_synthesize_chunk(task: tuple) -> tuple[int, np.ndarray, str | None]:
@@ -97,7 +115,11 @@ class ChunkSynthResult:
 ProgressFn = Callable[[float, str], None]
 
 
-def _noop_progress(_frac: float, _desc: str) -> None:
+def _noop_progress(
+    _frac: float | tuple[int, int | None] | None,
+    desc: str | None = None,
+    **_: object,
+) -> None:
     pass
 
 
@@ -106,7 +128,6 @@ def synthesize_tts_chunks(
     engine,
     tts_chunks: list[TtsChunk],
     wave_parts: list[np.ndarray],
-    resume_from: int,
     norm_pipeline: list[str],
     tts_input_mode: str,
     ref_audio_path: str,
@@ -118,58 +139,60 @@ def synthesize_tts_chunks(
     onnx_quant_mode: str,
     parallel_workers: int,
     use_onnx_gpu: bool = False,
-    use_pytorch_vocoder: bool = True,
-    manifest: dict,
-    output_dir,
     progress: ProgressFn | None = None,
+    status_log: StatusLog | None = None,
 ) -> ChunkSynthResult:
     """
-    Synthesize all pending chunks (respecting checkpoint resume).
-    Falls back to sequential when workers==1, resume active, or only one pending chunk.
+    Synthesize all chunks from scratch with current parameters.
+    Falls back to sequential when workers==1 or only one pending chunk.
     """
-    progress = progress or _noop_progress
+    if progress is None:
+        progress = _noop_progress
     use_gpu = bool(use_onnx_gpu) and not is_force_cpu()
-    workers = clamp_parallel_workers(
-        parallel_workers,
-        use_gpu=use_gpu,
-        use_pytorch_vocoder=use_pytorch_vocoder,
-    )
-    if use_pytorch_vocoder and parallel_workers > 1:
-        logger.info(
-            "parallel_workers=%d → 1 (PyTorch vocoder — không hỗ trợ song song)",
-            parallel_workers,
+    requested_workers = int(parallel_workers)
+    workers = clamp_parallel_workers(requested_workers, use_gpu=use_gpu)
+    if requested_workers != workers:
+        clamp_msg = parallel_workers_clamp_message(
+            requested_workers, workers, use_gpu=use_gpu
         )
-    if resume_from > 0 and workers > 1:
-        logger.info(
-            "parallel_workers=%d → 1 (checkpoint resume từ chunk %d)",
-            workers,
-            resume_from + 1,
-        )
-        workers = 1
+        logger.warning(clamp_msg)
+        if status_log is not None:
+            status_log.warn(clamp_msg)
+
+    def _ref_show_info(msg: str) -> None:
+        logger.info(msg)
+        if status_log is not None:
+            status_log.info(f"Ref audio: {msg}")
+
+    if status_log is not None:
+        status_log.stage_begin("Tiền xử lý giọng mẫu")
+        status_log.info(f"ref_audio_path={ref_audio_path}")
+        status_log.info(f"ref_text_len={len(ref_text.strip())} ký tự")
 
     ref_audio, resolved_ref_text = preprocess_ref_audio_text(
         ref_audio_path,
         ref_text,
-        show_info=logger.info,
+        show_info=_ref_show_info,
     )
     prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
+
+    if status_log is not None:
+        status_log.info(f"prompt_normalized_len={len(prompt_normalized)} ký tự")
+        status_log.stage_end("Tiền xử lý giọng mẫu", f"temp_wav={ref_audio}")
 
     pending: list[tuple[int, str]] = []
     normalized_preview = ""
     total = len(tts_chunks)
 
     for i, tts_chunk in enumerate(tts_chunks):
-        if i < resume_from and wave_parts[i].size > 0:
-            continue
         normalized = prepare_for_tts(
             tts_chunk.text, norm_pipeline, tts_input_mode, already_normalized=True
         )
         if not normalized.strip():
-            logger.warning(
-                "skip chunk %d/%d: empty after normalize",
-                i + 1,
-                total,
-            )
+            msg = f"Bỏ qua chunk {i + 1}/{total}: rỗng sau chuẩn hóa"
+            logger.warning("skip chunk %d/%d: empty after normalize", i + 1, total)
+            if status_log is not None:
+                status_log.warn(msg)
             wave_parts[i] = np.array([], dtype=np.float32)
             continue
         if not normalized_preview:
@@ -188,6 +211,8 @@ def synthesize_tts_chunks(
             chunks_synthesized=0,
         )
 
+    if status_log is not None:
+        status_log.stage_begin("Tổng hợp chunk")
     t0 = time.perf_counter()
     use_parallel = workers > 1 and len(pending) > 1
 
@@ -198,6 +223,11 @@ def synthesize_tts_chunks(
             len(pending),
             total,
         )
+        if status_log is not None:
+            status_log.info(
+                f"Chế độ song song: {workers} workers, "
+                f"{len(pending)}/{total} chunk cần tổng hợp"
+            )
         _run_parallel(
             pending=pending,
             wave_parts=wave_parts,
@@ -211,10 +241,8 @@ def synthesize_tts_chunks(
             use_onnx_gpu=use_gpu,
             workers=workers,
             total=total,
-            engine=engine,
-            manifest=manifest,
-            output_dir=output_dir,
             progress=progress,
+            status_log=status_log,
         )
     else:
         logger.info(
@@ -222,6 +250,10 @@ def synthesize_tts_chunks(
             len(pending),
             total,
         )
+        if status_log is not None:
+            status_log.info(
+                f"Chế độ tuần tự: {len(pending)}/{total} chunk cần tổng hợp"
+            )
         _run_sequential(
             pending=pending,
             wave_parts=wave_parts,
@@ -233,9 +265,8 @@ def synthesize_tts_chunks(
             t_shift=t_shift,
             engine=engine,
             total=total,
-            manifest=manifest,
-            output_dir=output_dir,
             progress=progress,
+            status_log=status_log,
         )
 
     elapsed = time.perf_counter() - t0
@@ -247,6 +278,12 @@ def synthesize_tts_chunks(
         elapsed,
         len(pending),
     )
+    if status_log is not None:
+        status_log.stage_end(
+            "Tổng hợp chunk",
+            f"mode={mode}, workers={workers if use_parallel else 1}, "
+            f"chunks={len(pending)}",
+        )
     return ChunkSynthResult(
         wave_parts=wave_parts,
         normalized_preview=normalized_preview,
@@ -254,18 +291,6 @@ def synthesize_tts_chunks(
         effective_workers=workers if use_parallel else 1,
         parallel_used=use_parallel,
         chunks_synthesized=len(pending),
-    )
-
-
-def _save_chunk(
-    engine,
-    index: int,
-    wav: np.ndarray,
-    manifest: dict,
-    output_dir,
-) -> None:
-    save_tts_checkpoint_chunk(
-        output_dir, index, wav, engine.sampling_rate, manifest
     )
 
 
@@ -281,16 +306,19 @@ def _run_sequential(
     t_shift: float,
     engine,
     total: int,
-    manifest: dict,
-    output_dir,
     progress: ProgressFn,
+    status_log: StatusLog | None = None,
 ) -> None:
     done = total - len(pending)
     for i, normalized in pending:
+        chunk_label = f"Chunk {i + 1}/{total} ({len(normalized)} ký tự)"
+        if status_log is not None:
+            status_log.info(f"Bắt đầu {chunk_label}")
         progress(
             (done + 1) / total,
             desc=f"Đang tổng hợp đoạn {i + 1}/{total} (ONNX)...",
         )
+        t_chunk = time.perf_counter()
         wav = engine.generate(
             prompt_text=prompt_normalized,
             prompt_wav=ref_audio,
@@ -301,14 +329,23 @@ def _run_sequential(
             t_shift=float(t_shift),
         )
         if wav.size == 0:
+            msg = (
+                f"Bỏ qua {chunk_label}: wav rỗng (0 mel frames)"
+            )
             logger.warning(
                 "skip chunk %d/%d (%d chars): empty wav (0 mel frames)",
                 i + 1,
                 total,
                 len(normalized),
             )
+            if status_log is not None:
+                status_log.warn(msg)
+        elif status_log is not None:
+            status_log.info(
+                f"Xong {chunk_label} — {wav.size} samples "
+                f"({time.perf_counter() - t_chunk:.2f}s)"
+            )
         wave_parts[i] = wav
-        _save_chunk(engine, i, wav, manifest, output_dir)
         del wav
         done += 1
         if is_force_cpu():
@@ -329,10 +366,8 @@ def _run_parallel(
     use_onnx_gpu: bool,
     workers: int,
     total: int,
-    engine,
-    manifest: dict,
-    output_dir,
     progress: ProgressFn,
+    status_log: StatusLog | None = None,
 ) -> None:
     norm_by_index = {i: normalized for i, normalized in pending}
     tasks = [
@@ -361,19 +396,26 @@ def _run_parallel(
         for fut in as_completed(futures):
             index, wav, err = fut.result()
             if err is not None:
-                raise RuntimeError(
-                    f"Lỗi tổng hợp chunk {index + 1}/{total}: {err}"
-                ) from None
+                err_msg = f"Lỗi tổng hợp chunk {index + 1}/{total}: {err}"
+                if status_log is not None:
+                    status_log.error(err_msg)
+                raise RuntimeError(err_msg) from None
+            normalized_len = len(norm_by_index.get(index, ""))
+            chunk_label = f"Chunk {index + 1}/{total} ({normalized_len} ký tự)"
             if wav.size == 0:
-                normalized_len = len(norm_by_index.get(index, ""))
                 logger.warning(
                     "skip chunk %d/%d (%d chars): empty wav (0 mel frames)",
                     index + 1,
                     total,
                     normalized_len,
                 )
+                if status_log is not None:
+                    status_log.warn(
+                        f"Bỏ qua {chunk_label}: wav rỗng (0 mel frames)"
+                    )
+            elif status_log is not None:
+                status_log.info(f"Xong {chunk_label} — {wav.size} samples")
             wave_parts[index] = wav
-            _save_chunk(engine, index, wav, manifest, output_dir)
             del wav
             completed += 1
             progress(

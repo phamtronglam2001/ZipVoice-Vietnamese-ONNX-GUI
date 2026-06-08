@@ -27,24 +27,19 @@ logger = setup_runtime_logging(name="zipvoice_cli")
 DEFAULT_PROFILE = "none"
 
 
-def _ensure_runtime(use_pytorch_vocoder: bool = True) -> None:
-    if not models_ready(use_pytorch_vocoder=use_pytorch_vocoder):
+def _ensure_runtime() -> None:
+    if not models_ready():
         print("[ERROR] Runtime not ready. Run install_cpu.bat first.", file=sys.stderr)
         if not onnx_ready():
             print("[ERROR] Missing ONNX files in models/onnx/", file=sys.stderr)
-        if use_pytorch_vocoder:
-            from config import pytorch_vocoder_ready
+        from config import vocoder_deploy_instructions, vocoder_onnx_ready
 
-            if not pytorch_vocoder_ready():
-                print(
-                    "[ERROR] Missing PyTorch Vocos in models/vocoder/ "
-                    "(config.yaml + pytorch_model.bin).",
-                    file=sys.stderr,
-                )
-                print(
-                    "Run: python download_models.py --pytorch-vocoder",
-                    file=sys.stderr,
-                )
+        if not vocoder_onnx_ready():
+            print(
+                "[ERROR] Missing ONNX vocoder in models/vocoder/ (mel_spec_24khz.onnx).",
+                file=sys.stderr,
+            )
+            print(vocoder_deploy_instructions(), file=sys.stderr)
         sys.exit(1)
 
 
@@ -157,11 +152,9 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
     from chunk_synthesis import clamp_parallel_workers, synthesize_tts_chunks
     from onnx_engine import OnnxTTSEngine
     from utils import (
-        compute_tts_checkpoint_key,
         export_normalized_text_file,
         format_tts_timing_line,
         join_tts_audio_chunks,
-        load_tts_checkpoint_chunks,
         normalize_full_document,
         preview_normalize_output,
         split_text_for_tts,
@@ -193,10 +186,7 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
             ))
         return 0
 
-    use_pytorch_vocoder = bool(
-        getattr(args, "use_pytorch_vocoder", preset.use_pytorch_vocoder)
-    )
-    _ensure_runtime(use_pytorch_vocoder=use_pytorch_vocoder)
+    _ensure_runtime()
 
     voices = scan_ref_voices()
     ref_path, ref_text = _resolve_ref_from_preset(preset, voices)
@@ -211,24 +201,21 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
     workers = clamp_parallel_workers(
         getattr(args, "parallel_workers", None) or preset.parallel_workers,
         use_gpu=bool(getattr(args, "onnx_gpu", False) or preset.use_onnx_gpu),
-        use_pytorch_vocoder=use_pytorch_vocoder,
     )
     use_gpu = bool(getattr(args, "onnx_gpu", False) or preset.use_onnx_gpu)
     logger.info(
-        "CLI synthesize | profile=%s | gen_len=%d | mode=%s | quant=%s | workers=%d | gpu=%s | vocoder=%s",
+        "CLI synthesize | profile=%s | gen_len=%d | mode=%s | quant=%s | workers=%d | gpu=%s",
         args.profile or DEFAULT_PROFILE,
         len(gen_text),
         tts_input_mode,
         preset.onnx_quant_mode,
         workers,
         use_gpu,
-        "pytorch" if use_pytorch_vocoder else "onnx",
     )
 
     engine = OnnxTTSEngine.get(
         quant_mode=preset.onnx_quant_mode,
         use_gpu=use_gpu,
-        use_pytorch_vocoder=use_pytorch_vocoder,
     )
     normalized_doc = normalize_full_document(
         gen_text, preset.pipeline, tts_input_mode
@@ -243,37 +230,8 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
         pause_forced_split=preset.pause_forced_split,
     )
 
-    checkpoint_key = compute_tts_checkpoint_key(
-        gen_text,
-        preset.pipeline,
-        preset.chunk_max_chars,
-        speed=preset.speed,
-        pause_sentence=preset.pause_sentence,
-        pause_paragraph=preset.pause_paragraph,
-        pause_chapter=preset.pause_chapter,
-        pause_forced=preset.pause_forced_split,
-        asset_voice_id=preset.voice_id or "",
-        input_mode=tts_input_mode,
-    )
-    manifest = {
-        "checkpoint_key": checkpoint_key,
-        "num_chunks": len(tts_chunks),
-        "pipeline": preset.pipeline,
-        "input_mode": tts_input_mode,
-        "chunk_max_chars": preset.chunk_max_chars,
-        "speed": preset.speed,
-        "pause_sentence": preset.pause_sentence,
-        "pause_paragraph": preset.pause_paragraph,
-        "pause_chapter": preset.pause_chapter,
-        "pause_forced": preset.pause_forced_split,
-        "asset_voice_id": preset.voice_id or "",
-    }
-    cached_chunks, resume_from = load_tts_checkpoint_chunks(
-        OUTPUT_DIR, checkpoint_key, len(tts_chunks)
-    )
     wave_parts: list[np.ndarray] = [
-        cached_chunks.get(i, np.array([], dtype=np.float32))
-        for i in range(len(tts_chunks))
+        np.array([], dtype=np.float32) for _ in range(len(tts_chunks))
     ]
 
     try:
@@ -281,7 +239,6 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
             engine=engine,
             tts_chunks=tts_chunks,
             wave_parts=wave_parts,
-            resume_from=resume_from,
             norm_pipeline=preset.pipeline,
             tts_input_mode=tts_input_mode,
             ref_audio_path=ref_path,
@@ -293,9 +250,6 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
             onnx_quant_mode=preset.onnx_quant_mode,
             parallel_workers=workers,
             use_onnx_gpu=use_gpu,
-            use_pytorch_vocoder=use_pytorch_vocoder,
-            manifest=manifest,
-            output_dir=OUTPUT_DIR,
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
@@ -415,7 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Workers for parallel chunk synthesis (default: preset or 1). "
-            "GPU mode capped at 2. Disabled when resuming checkpoint."
+            "GPU mode capped at 2."
         ),
     )
     synth_p.add_argument(
@@ -423,19 +377,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="onnx_gpu",
         help="Use ONNX Runtime CUDA/DirectML (requires onnxruntime-gpu)",
-    )
-    synth_p.add_argument(
-        "--pytorch-vocoder",
-        dest="use_pytorch_vocoder",
-        action="store_true",
-        default=True,
-        help="Use PyTorch Vocos vocoder (default, best quality)",
-    )
-    synth_p.add_argument(
-        "--onnx-vocoder",
-        dest="use_pytorch_vocoder",
-        action="store_false",
-        help="Use ONNX wetdog + librosa ISTFT (lower quality, no torch for vocoder)",
     )
 
     return parser

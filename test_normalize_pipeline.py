@@ -35,9 +35,27 @@ class NormalizePipelineTests(unittest.TestCase):
         raw = "một. đọc đoạn văn"
         pipe = build_normalize_pipeline(["period_break"])
         doc = normalize_full_document(raw, pipe)
-        chunks = split_text_for_tts(doc, max_chars=135)
-        self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].text.strip(), "một.")
+        merge_log: list[str] = []
+        chunks = split_text_for_tts(doc, max_chars=135, merge_log=merge_log)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("một.", chunks[0].text)
+        self.assertIn("đọc đoạn văn", chunks[0].text)
+        self.assertGreaterEqual(len(merge_log), 1)
+
+    def test_tiny_orphan_merged_forward(self):
+        merge_log: list[str] = []
+        chunks = split_text_for_tts("một.\nđọc đoạn văn", max_chars=135, merge_log=merge_log)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].text.strip(), "một. đọc đoạn văn")
+        self.assertGreaterEqual(len(merge_log), 1)
+
+    def test_paragraph_orphan_merged_forward(self):
+        merge_log: list[str] = []
+        raw = "word word word word word word word word word word.\nmột.\nmore text here please"
+        chunks = split_text_for_tts(raw, max_chars=135, merge_log=merge_log)
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[1].text.strip(), "một. more text here please")
+        self.assertGreaterEqual(len(merge_log), 1)
 
     def test_newline_sentence_adds_period(self):
         raw = "Chương 1\nNội dung"

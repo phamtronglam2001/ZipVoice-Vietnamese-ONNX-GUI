@@ -1,0 +1,9 @@
+Chương 1
+
+Đoạn mở đầu. Câu thứ hai trong đoạn.
+
+Đoạn mới sau dòng trống. Tránh một đoạn dài hàng nghìn ký tự không xuống dòng.
+
+Chương 2
+
+...
