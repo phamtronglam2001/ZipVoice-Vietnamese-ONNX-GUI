@@ -126,12 +126,12 @@ Reference voice, input text, and synthesized output (click **play** to open the 
 
 <table>
 <tr>
-<td colspan="2"><h3>Bá-Vinh &nbsp;<code>sample_audio</code></h3></td>
+<td colspan="2"><h3>Đinh Quyết &nbsp;<code>Đinh-Quyết</code></h3></td>
 </tr>
 <tr>
 <td width="50%">
 <b>Reference</b>&ensp;<a href="docs/demo/ref_voice.mp3">play</a><br>
-<i>Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.</i>
+<i>Trong trang, việc ứng dụng công nghệ và chuyển đổi số đang là yếu tố chi phối các mô hình này.</i>
 </td>
 <td width="50%">
 <b>Text to synthesize</b><br>

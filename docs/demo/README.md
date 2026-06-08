@@ -14,7 +14,7 @@ Pattern follows [gwen-tts](https://github.com/ggroup-ai-lab/gwen-tts): relative 
 ## Regenerate
 
 1. Screenshot → `docs/screenshot.png`
-2. Reference → copy e.g. `assets/sample_audio/Bá-Vinh.mp3` → `ref_voice.mp3`
+2. Reference → copy e.g. `assets/sample_audio/Đinh-Quyết.mp3` → `ref_voice.mp3` (update README transcript from matching `.txt`)
 3. Run TTS with `sample_text.txt` → `output.wav`
 4. Update README italic text if `sample_text.txt` changes
 5. Commit and push (`docs/screenshot.png`, `docs/demo/*.mp3` are whitelisted in `.gitignore`)
