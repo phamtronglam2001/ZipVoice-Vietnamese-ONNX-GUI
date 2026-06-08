@@ -1,6 +1,6 @@
 # ZipVoice Vietnamese ONNX GUI
 
-TTS tiếng Việt zero-shot **offline**: ZipVoice ONNX (int4/int8) + vocoder Vocos 100 mel + GUI **Slint** (production) và **Gradio** (debug).
+TTS tiếng Việt zero-shot **offline**: ZipVoice ONNX (int4/int8) + vocoder Vocos 100 mel + GUI **Gradio** (khuyến nghị). GUI desktop **Slint** đang dở — xem [TODO](#todo).
 
 **Tác giả:** [Pham Trong Lam](https://github.com/phamtronglam2001) · **License:** Non-Commercial (`LICENSE`) · [English](README_EN.md)
 
@@ -37,11 +37,11 @@ Mọi launcher `.bat` đặt `PYTHONPATH=%~dp0src` rồi gọi module trong `src
 
 | Mục đích | Lệnh |
 |----------|------|
-| **GUI production (Slint)** | `run_slint_gui.bat` → `src/slint_gui/main.py` |
-| **GUI debug (Gradio)** | `run_gui.bat` (auto CPU/GPU) hoặc `run_cpu.bat` / `run_gpu.bat` |
+| **GUI (Gradio — khuyến nghị)** | `run_gui.bat` (auto CPU/GPU) hoặc `run_cpu.bat` / `run_gpu.bat` |
 | **CLI** | `run_cli.bat` → `src/cli_tts.py` |
+| ~~Slint desktop~~ | `run_slint_gui.bat` — **chưa dùng được**, xem [TODO](#todo) |
 
-Slint: giọng, preset, synth sách dài. Gradio: debug chunk, seed, xem pipeline chuẩn hóa.
+Gradio: synth, preset, chunk preview, export debug, log ONNX. Slint tạm **không khuyến nghị** cho đến khi TODO xong.
 
 ---
 
@@ -64,9 +64,15 @@ Micro-chunk quá ngắn được gộp **trong một lần synth** (nối bằng
 | **Min ký tự / chunk** | 70 | Gộp phần quá ngắn (tránh mel yếu / lạc giọng) |
 | **Max ký tự / chunk** | 135 | Trần độ dài; giảm nếu OOM |
 
-Có trong Gradio, Slint, preset.
+Có trong Gradio và preset.
 
 ---
+
+## TODO
+
+Các hạng mục **chưa hoàn thành** — đừng coi là production-ready:
+
+- [ ] **Slint GUI** (`src/slint_gui/`, `run_slint_gui.bat`) — scaffold desktop (UI + `tts_pipeline` chung) nhưng **chưa ổn định**: crash/tự thoát im lặng khi tổng hợp ONNX, binding Slint Python 1.9.x còn lỗi, thiếu preset/export chunk so với Gradio. **Hiện dùng Gradio** (`run_gui.bat`). Ghi chú kỹ thuật: [`src/slint_gui/README.md`](src/slint_gui/README.md).
 
 ## Lời cảm ơn
 
@@ -80,7 +86,7 @@ Có trong Gradio, Slint, preset.
 | Espeak / piper_phonemize | [espeak-ng](https://github.com/espeak-ng/espeak-ng) · [k2-fsa/icefall](https://github.com/k2-fsa/icefall) | theo repo gốc |
 | ONNX Runtime | [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime) | MIT |
 
-GUI, Slint, pipeline chunk/audio, preset: **Pham Trong Lam** — Non-Commercial (`LICENSE`).
+GUI Gradio, pipeline chunk/audio, preset: **Pham Trong Lam** — Non-Commercial (`LICENSE`).
 
 Audio sinh ra từ model `hynt` phải tuân thủ **CC-BY-NC-SA-4.0** và ghi rõ AI-generated.
 

@@ -43,7 +43,7 @@ src/
   audio/
     post_process.py      # join_tts_audio_chunks, leading_pause, forced-split crossfade
     ref_audio.py         # preprocess_ref_audio_text, resample
-  slint_gui/             # Slint production GUI
+  slint_gui/             # Slint desktop GUI (WIP — see README TODO)
     main.py
     ui/app.slint
     backend/tts_controller.py

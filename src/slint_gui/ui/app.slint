@@ -21,6 +21,7 @@ export component MainWindow inherits Window {
     callback browse-gen-txt-file();
     callback gpu-setting-changed();
     callback theme-toggle-clicked();
+    callback clear-log-clicked();
 
     in-out property <bool> busy: false;
     in-out property <float> progress-value: 0.0;
@@ -70,7 +71,9 @@ export component MainWindow inherits Window {
     in-out property <string> status-summary: "";
     in-out property <string> status-log: "";
     in-out property <string> norm-preview: "";
+    in-out property <string> chunk-preview: "";
     in-out property <string> output-file-path: "";
+    in-out property <string> log-file-path: "";
 
     public function apply-theme() {
         Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light;
@@ -399,36 +402,70 @@ export component MainWindow inherits Window {
 
             Tab {
                 title: "Kết quả & log";
-                VerticalLayout {
-                    padding: 8px;
-                    spacing: 6px;
+                ScrollView {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 6px;
 
-                    Text { text: "Tóm tắt"; font-weight: 600; color: Palette.foreground; }
-                    TextInput {
-                        text <=> root.status-summary;
-                        read-only: true;
-                        min-height: 100px;
-                    }
+                        Text { text: "Tóm tắt"; font-weight: 600; color: Palette.foreground; }
+                        TextInput {
+                            text <=> root.status-summary;
+                            read-only: true;
+                            min-height: 72px;
+                        }
 
-                    Text { text: "File output"; font-weight: 600; color: Palette.foreground; }
-                    LineEdit {
-                        text <=> root.output-file-path;
-                        read-only: true;
-                    }
+                        Text { text: "File output"; font-weight: 600; color: Palette.foreground; }
+                        LineEdit {
+                            text <=> root.output-file-path;
+                            read-only: true;
+                        }
 
-                    Text { text: "Text đã chuẩn hóa (xem trước)"; font-weight: 600; color: Palette.foreground; }
-                    TextInput {
-                        text <=> root.norm-preview;
-                        read-only: true;
-                        min-height: 80px;
-                    }
+                        Text {
+                            text: "File log (Python): " + root.log-file-path;
+                            font-size: 11px;
+                            color: Palette.foreground;
+                            wrap: word-wrap;
+                        }
 
-                    Text { text: "Nhật ký trạng thái (debug)"; font-weight: 600; color: Palette.foreground; }
-                    TextInput {
-                        text <=> root.status-log;
-                        read-only: true;
-                        vertical-stretch: 1;
-                        min-height: 180px;
+                        HorizontalLayout {
+                            Text {
+                                text: "Text đã chuẩn hóa (xem trước)";
+                                font-weight: 600;
+                                color: Palette.foreground;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button {
+                                text: "Xóa log";
+                                enabled: !root.busy;
+                                clicked => { root.clear-log-clicked(); }
+                            }
+                        }
+                        TextInput {
+                            text <=> root.norm-preview;
+                            read-only: true;
+                            min-height: 100px;
+                            font-family: "Consolas";
+                            font-size: 11px;
+                        }
+
+                        Text { text: "Chunk preview (debug)"; font-weight: 600; color: Palette.foreground; }
+                        TextInput {
+                            text <=> root.chunk-preview;
+                            read-only: true;
+                            min-height: 140px;
+                            font-family: "Consolas";
+                            font-size: 11px;
+                        }
+
+                        Text { text: "Nhật ký trạng thái (debug — stream khi tổng hợp)"; font-weight: 600; color: Palette.foreground; }
+                        TextInput {
+                            text <=> root.status-log;
+                            read-only: true;
+                            min-height: 220px;
+                            font-family: "Consolas";
+                            font-size: 11px;
+                        }
                     }
                 }
             }

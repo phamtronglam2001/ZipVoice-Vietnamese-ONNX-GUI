@@ -1,8 +1,10 @@
-# ZipVoice Vietnamese ONNX — Slint GUI (production)
+# ZipVoice Vietnamese ONNX — Slint GUI (**WIP / not recommended**)
 
-Native desktop GUI for **production TTS**. Uses shared `src/tts_pipeline.py` (same stages, defaults, and inference params as Gradio).
+> **Trạng thái:** Chưa hoàn thành — tạm **không dùng** cho production. App có thể tự thoát im lặng khi tổng hợp ONNX. Dùng **Gradio** (`run_gui.bat`) thay thế. Theo dõi tiến độ trong [README TODO](../README.md#todo).
 
-**Gradio** (`src/app.py`) is the **debug** surface: status-log tooling, export normalized `.txt`, export per-chunk WAVs, presets, in-app playback. Those features stay in Gradio only — not ported to Slint.
+Scaffold desktop GUI — dùng chung `src/tts_pipeline.py` với Gradio. Code giữ lại để phát triển sau.
+
+**Gradio** (`src/app.py`) là GUI **khuyến nghị** hiện tại: status-log, export normalized `.txt`, export per-chunk WAVs, presets, in-app playback.
 
 ## Prerequisites
 

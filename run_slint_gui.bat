@@ -60,6 +60,11 @@ if /i "!INSTALL_MODE!"=="gpu" (
     echo Dang khoi dong Slint GUI ZipVoice ONNX ^(CPU-only^)...
 )
 
+echo.
+echo [CANH BAO] Slint GUI CHUA HOAN THANH - co the crash im lang.
+echo            Dung run_gui.bat ^(Gradio^) cho den khi README TODO xong.
+echo.
+
 ".venv\Scripts\python.exe" "%~dp0src\slint_gui\main.py"
 
 if errorlevel 1 pause

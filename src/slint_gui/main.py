@@ -31,7 +31,7 @@ from chunk_synthesis import (  # noqa: E402
     max_parallel_workers,
     ui_parallel_workers_max,
 )
-from runtime_log import setup_runtime_logging  # noqa: E402
+from runtime_log import LOG_FILE, setup_runtime_logging  # noqa: E402
 
 ensure_ffmpeg_on_path()
 logger = setup_runtime_logging(name="zipvoice_slint_gui")
@@ -62,6 +62,7 @@ from assets_loader import MANUAL_CHOICE  # noqa: E402
 from slint_gui.backend.tts_controller import TTSController  # noqa: E402
 from slint_gui.slint_utils import bind_string_list_model, slint_int  # noqa: E402
 from slint_gui.theme_prefs import load_dark_mode, save_dark_mode  # noqa: E402
+import onnx_engine  # noqa: E402, F401 — early CUDA DLL path (same as Gradio app.py)
 from tts_pipeline import TTSResult, TTSError  # noqa: E402
 
 UI_PATH = Path(__file__).resolve().parent / "ui" / "app.slint"
@@ -100,6 +101,8 @@ class MainWindow(components.MainWindow):
         self._sync_voices()
         self.pipeline_display = self.controller.pipeline_display()
         self.runtime_device = self.controller.predicted_runtime_device()
+        self.log_file_path = str(LOG_FILE)
+        self.status_log = self.controller.startup_log_text()
         self.dark_mode = load_dark_mode(default=False)
         self.apply_theme()
 
@@ -108,6 +111,12 @@ class MainWindow(components.MainWindow):
         self.dark_mode = not bool(self.dark_mode)
         self.apply_theme()
         save_dark_mode(bool(self.dark_mode))
+
+    @slint.callback
+    def clear_log_clicked(self) -> None:
+        self.controller.status_log.clear()
+        self.status_log = self.controller.startup_log_text()
+        self.chunk_preview = ""
 
     def _sync_static_options(self) -> None:
         c = self.controller
@@ -242,8 +251,9 @@ class MainWindow(components.MainWindow):
         idx = min(slint_int(self.norm_step_index), len(keys) - 1)
         try:
             self.pipeline_display = self.controller.pipeline_add(keys[idx])
+            self.status_log = self.controller.append_ui_log(f"Pipeline + {keys[idx]}")
         except ValueError as exc:
-            self.status_log = str(exc)
+            self.status_log = self.controller.append_ui_log(str(exc), level="error")
 
     @slint.callback
     def pipeline_remove_clicked(self) -> None:
@@ -275,9 +285,14 @@ class MainWindow(components.MainWindow):
     def preview_normalize_clicked(self) -> None:
         self._pull_state_from_ui()
         try:
-            self.norm_preview = self.controller.preview_normalize()
+            norm, chunks, log_text = self.controller.preview_normalize()
+            self.norm_preview = norm
+            self.chunk_preview = chunks
+            self.status_log = log_text
+            self.status_summary = "Xem trước chuẩn hóa — xong"
         except (ValueError, ImportError) as exc:
             self.status_summary = str(exc)
+            self.status_log = self.controller.append_ui_log(str(exc), level="error")
 
     @slint.callback
     def synthesize_clicked(self) -> None:
@@ -288,6 +303,8 @@ class MainWindow(components.MainWindow):
         self.progress_value = 0.0
         self.progress_label = "Đang tổng hợp..."
         self.status_summary = "Đang xử lý..."
+        self.controller.status_log.clear()
+        self.status_log = ""
         self.runtime_device = self.controller.predicted_runtime_device()
 
         def on_progress(frac: float, desc: str) -> None:
@@ -301,6 +318,16 @@ class MainWindow(components.MainWindow):
         def on_log(text: str) -> None:
             def update() -> None:
                 self.status_log = text
+
+            _invoke_ui(update)
+
+        def on_snapshot(norm_preview: str, log_text: str, runtime_device: str) -> None:
+            def update() -> None:
+                self.status_log = log_text
+                if norm_preview:
+                    self.norm_preview = norm_preview
+                if runtime_device:
+                    self.runtime_device = runtime_device
 
             _invoke_ui(update)
 
@@ -324,7 +351,9 @@ class MainWindow(components.MainWindow):
 
             _invoke_ui(finish)
 
-        started = self.controller.synthesize_async(on_progress, on_log, on_done)
+        started = self.controller.synthesize_async(
+            on_progress, on_log, on_done, on_snapshot
+        )
         if not started:
             self.busy = False
             self.status_summary = "Đang chạy tổng hợp khác — vui lòng đợi."

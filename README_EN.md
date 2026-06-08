@@ -1,6 +1,6 @@
 # ZipVoice Vietnamese ONNX GUI
 
-Offline Vietnamese zero-shot TTS: ZipVoice ONNX (int4/int8) + 100-mel Vocos vocoder + **Slint** (production) and **Gradio** (debug) GUIs.
+Offline Vietnamese zero-shot TTS: ZipVoice ONNX (int4/int8) + 100-mel Vocos vocoder + **Gradio** GUI (recommended). Desktop **Slint** GUI is **incomplete** — see [TODO](#todo).
 
 **Author:** [Pham Trong Lam](https://github.com/phamtronglam2001) · **License:** Non-Commercial (`LICENSE`) · [Tiếng Việt](README.md)
 
@@ -37,9 +37,9 @@ All `.bat` launchers set `PYTHONPATH=%~dp0src` then invoke modules under `src/`.
 
 | Purpose | Command |
 |---------|---------|
-| **Production GUI (Slint)** | `run_slint_gui.bat` → `src/slint_gui/main.py` |
-| **Debug GUI (Gradio)** | `run_gui.bat` (auto CPU/GPU) or `run_cpu.bat` / `run_gpu.bat` |
+| **GUI (Gradio — recommended)** | `run_gui.bat` (auto CPU/GPU) or `run_cpu.bat` / `run_gpu.bat` |
 | **CLI** | `run_cli.bat` → `src/cli_tts.py` |
+| ~~Slint desktop~~ | `run_slint_gui.bat` — **not ready**, see [TODO](#todo) |
 
 ---
 
@@ -62,7 +62,15 @@ Over-short **micro-chunks** are merged into **one** synthesis (joined with `\n`)
 | **Min chars / chunk** | 70 | Merge tiny segments (avoid weak mel / voice drift) |
 | **Max chars / chunk** | 135 | Upper bound; lower if OOM |
 
-Available in Gradio, Slint, and presets.
+Available in Gradio and presets.
+
+---
+
+## TODO
+
+Items **not finished** — do not treat as production-ready:
+
+- [ ] **Slint GUI** (`src/slint_gui/`, `run_slint_gui.bat`) — desktop scaffold (UI + shared `tts_pipeline`) but **unstable**: silent crash on ONNX synthesis, Slint Python 1.9.x binding issues, missing preset/chunk export vs Gradio. **Use Gradio** (`run_gui.bat`) for now. Notes: [`src/slint_gui/README.md`](src/slint_gui/README.md).
 
 ---
 
@@ -78,7 +86,7 @@ Available in Gradio, Slint, and presets.
 | Espeak / piper_phonemize | [espeak-ng](https://github.com/espeak-ng/espeak-ng) · [k2-fsa/icefall](https://github.com/k2-fsa/icefall) | per upstream |
 | ONNX Runtime | [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime) | MIT |
 
-GUI, Slint, chunk/audio pipeline, presets: **Pham Trong Lam** — Non-Commercial (`LICENSE`).
+Gradio GUI, chunk/audio pipeline, presets: **Pham Trong Lam** — Non-Commercial (`LICENSE`).
 
 Output from `hynt` models must comply with **CC-BY-NC-SA-4.0** and be labeled AI-generated.
 

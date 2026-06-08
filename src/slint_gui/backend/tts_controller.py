@@ -9,12 +9,28 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from assets_loader import MANUAL_CHOICE, RefVoice, dropdown_choices, get_voice_by_id, scan_ref_voices
-from config import is_force_cpu, is_onnx_gpu_env, onnx_quant_mode as get_onnx_quant_mode
+from config import (
+    is_force_cpu,
+    is_onnx_gpu_env,
+    onnx_quant_mode as get_onnx_quant_mode,
+    onnx_quant_mode_source,
+)
 from export_audio import EXPORT_CHOICES
 from onnx_providers import predict_runtime_device_summary
 from onnx_quant import QUANT_MODE_CHOICES
 from status_log import StatusLog
-from tts_pipeline import TTSRequest, TTSResult, TTSError, preview_normalize_text, run_tts_pipeline
+from runtime_log import LOG_FILE
+from text.normalizers import (
+    AUDIOBOOK_PRESET_PIPELINE,
+    DEFAULT_NORMALIZE_PIPELINE,
+    NORMALIZE_ADD_CHOICES,
+    build_normalize_pipeline,
+    format_normalize_pipeline,
+    format_normalize_pipeline_list,
+    pipeline_add_step,
+    pipeline_move,
+    pipeline_remove_at,
+)
 from text.chunking import (
     PAUSE_CHAPTER_DEFAULT,
     PAUSE_ENUM_DEFAULT,
@@ -22,17 +38,15 @@ from text.chunking import (
     PAUSE_PARAGRAPH_DEFAULT,
     PAUSE_SENTENCE_DEFAULT,
 )
-from text.normalizers import (
-    AUDIOBOOK_PRESET_PIPELINE,
-    DEFAULT_NORMALIZE_PIPELINE,
-    NORMALIZE_ADD_CHOICES,
-    build_normalize_pipeline,
-    format_normalize_pipeline_list,
-    pipeline_add_step,
-    pipeline_move,
-    pipeline_remove_at,
+from text.pipeline import INPUT_MODE_CHOICES, parse_input_mode, preview_chunks_output, preview_normalize_output
+from tts_pipeline import (
+    TTSProgress,
+    TTSRequest,
+    TTSResult,
+    TTSError,
+    iter_tts_pipeline,
+    resolve_gen_text_for_pipeline,
 )
-from text.pipeline import INPUT_MODE_CHOICES
 
 logger = logging.getLogger("zipvoice_slint_gui")
 
@@ -50,6 +64,7 @@ class SlintGuiState:
     onnx_quant_mode: str = field(default_factory=get_onnx_quant_mode)
     norm_pipeline: list[str] = field(default_factory=list)
     chunk_max_chars: int = 135
+    chunk_min_chars: int = 70
     pause_sentence: float = PAUSE_SENTENCE_DEFAULT
     pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT
     pause_chapter: float = PAUSE_CHAPTER_DEFAULT
@@ -151,6 +166,7 @@ class TTSController:
             export_format=s.export_format,
             norm_pipeline=list(s.norm_pipeline),
             chunk_max_chars=s.chunk_max_chars,
+            chunk_min_chars=s.chunk_min_chars,
             pause_sentence=s.pause_sentence,
             pause_paragraph=s.pause_paragraph,
             pause_chapter=s.pause_chapter,
@@ -181,7 +197,13 @@ class TTSController:
         on_progress: Callable[[float, str], None],
         on_log: Callable[[str], None],
         on_done: Callable[[TTSResult | TTSError], None],
+        on_snapshot: Callable[[str, str, str], None] | None = None,
     ) -> bool:
+        """Start synthesis on a worker thread.
+
+        on_snapshot(norm_preview, status_log_text, runtime_device) fires on each
+        pipeline progress tick (same streaming model as Gradio).
+        """
         with self._lock:
             if self._busy:
                 return False
@@ -189,40 +211,152 @@ class TTSController:
 
         def worker() -> None:
             self.status_log.clear()
+            on_log(self.status_log.text())
 
             def progress(frac: float, desc: str | None = None) -> None:
                 on_progress(float(frac), desc or "")
-                on_log(self.status_log.text())
 
             def notify_log() -> None:
                 on_log(self.status_log.text())
 
+            def notify_snapshot(
+                *,
+                norm_preview: str = "",
+                runtime_device: str = "",
+            ) -> None:
+                if on_snapshot is None:
+                    return
+                on_snapshot(
+                    norm_preview,
+                    self.status_log.text(),
+                    runtime_device,
+                )
+
             req = self.build_request()
-            result = run_tts_pipeline(
+            result: TTSResult | TTSError | None = None
+            runtime_device = self.predicted_runtime_device()
+            notify_snapshot(runtime_device=runtime_device)
+
+            for event in iter_tts_pipeline(
                 req,
                 voice_cache=self.voices,
                 progress=progress,
                 status_log=self.status_log,
                 on_log=notify_log,
-            )
+            ):
+                if isinstance(event, TTSProgress):
+                    notify_log()
+                    notify_snapshot(
+                        norm_preview=event.norm_preview,
+                        runtime_device=event.runtime_device or runtime_device,
+                    )
+                    if event.runtime_device:
+                        runtime_device = event.runtime_device
+                elif isinstance(event, (TTSResult, TTSError)):
+                    result = event
+
             on_log(self.status_log.text())
-            on_done(result)
+            if result is not None:
+                on_done(result)
             with self._lock:
                 self._busy = False
 
         threading.Thread(target=worker, daemon=True).start()
         return True
 
-    def preview_normalize(self) -> str:
+    def startup_log_text(self) -> str:
+        """Environment banner shown in the log tab at startup."""
+        s = self.state
+        log = StatusLog(mirror_console=False)
+        log.heading("Slint GUI — sẵn sàng")
+        log.info(f"File log: {LOG_FILE}")
+        log.info(f"Giọng assets: {len(self.voices)}")
+        quant = get_onnx_quant_mode()
+        log.info(f"ONNX quant mặc định: {quant} (nguồn: {onnx_quant_mode_source()})")
+        gpu_on = s.use_onnx_gpu and not is_force_cpu()
+        log.info(f"GPU checkbox/env: {gpu_on}")
+        log.info(f"Thiết bị dự kiến: {self.predicted_runtime_device()}")
+        if gpu_on and quant == "int4":
+            log.warn(
+                "int4 (MatMulNBits): fm_decoder thường chạy CPU trên ORT — "
+                "Dedicated VRAM thấp, Task Manager có thể chỉ thấy «Copy». "
+                "Thử int8 trong tab «Hiệu năng & synth» để dùng ~1GB VRAM như Gradio."
+            )
+        elif gpu_on and quant == "int8":
+            log.info(
+                "int8 + CUDA: kỳ vọng Dedicated GPU memory ~1GB và 3D/CUDA khi tổng hợp "
+                "(không chỉ Copy)."
+            )
+        log.blank()
+        log.info(
+            "Sau «Tổng hợp», xem dòng ORT text_encoder / fm_decoder / vocoder trong log — "
+            "CPUExecutionProvider = chạy CPU dù bật GPU."
+        )
+        log.info("Bấm «Xem trước chuẩn hóa» để xem chunk; «Tổng hợp» để chạy ONNX.")
+        return log.text()
+
+    def append_ui_log(self, msg: str, *, level: str = "info") -> str:
+        """Append a line to the shared status log (UI actions, pipeline edits)."""
+        if level == "warn":
+            self.status_log.warn(msg)
+        elif level == "error":
+            self.status_log.error(msg)
+        else:
+            self.status_log.info(msg)
+        return self.status_log.text()
+
+    def preview_normalize(self) -> tuple[str, str, str]:
+        """Return (norm_preview, chunk_preview, status_log_text)."""
         s = self.state
         gen_src = s.gen_txt_source_path.strip() or None
-        return preview_normalize_text(
-            s.gen_text,
-            gen_src,
-            s.norm_pipeline,
-            s.chunk_max_chars,
-            s.input_mode,
+        source_text = resolve_gen_text_for_pipeline(s.gen_text, gen_src)
+        input_mode = s.input_mode
+        pipeline = build_normalize_pipeline(s.norm_pipeline)
+        pipeline_label = format_normalize_pipeline(pipeline)
+
+        log = StatusLog(mirror_console=False)
+        log.heading("Xem trước chuẩn hóa & chunk")
+        log.info(f"Nguồn: {gen_src or '(ô nhập trực tiếp)'}")
+        log.info(f"input_mode={input_mode}")
+        log.info(f"pipeline={pipeline_label or '(trống)'}")
+        log.info(
+            f"chunk min={s.chunk_min_chars}, max={s.chunk_max_chars}; "
+            f"nghỉ câu={s.pause_sentence}s, đoạn={s.pause_paragraph}s, "
+            f"chương={s.pause_chapter}s, enum={s.pause_enum_item}s, "
+            f"cắt={s.pause_forced}s"
         )
+        log.info(f"gen_text_len={len(source_text)} ký tự")
+
+        norm_preview = preview_normalize_output(
+            source_text,
+            pipeline,
+            chunk_max_chars=int(s.chunk_max_chars),
+            chunk_min_chars=int(s.chunk_min_chars),
+            mode=parse_input_mode(input_mode),
+            pause_sentence=float(s.pause_sentence),
+            pause_paragraph=float(s.pause_paragraph),
+            pause_chapter=float(s.pause_chapter),
+            pause_enum_item=float(s.pause_enum_item),
+            pause_forced_split=float(s.pause_forced),
+            include_chunk_preview=True,
+            max_preview_chars=4000,
+        )
+        chunk_preview = preview_chunks_output(
+            source_text,
+            pipeline,
+            chunk_max_chars=int(s.chunk_max_chars),
+            chunk_min_chars=int(s.chunk_min_chars),
+            mode=parse_input_mode(input_mode),
+            pause_sentence=float(s.pause_sentence),
+            pause_paragraph=float(s.pause_paragraph),
+            pause_chapter=float(s.pause_chapter),
+            pause_enum_item=float(s.pause_enum_item),
+            pause_forced_split=float(s.pause_forced),
+            show_micro_merge=True,
+        )
+        log.blank()
+        log.info(f"── Chi tiết chunk: {len(chunk_preview.splitlines())} dòng (bên dưới) ──")
+        return norm_preview, chunk_preview, log.text() + "\n\n" + chunk_preview
 
     @staticmethod
     def export_format_labels() -> list[str]:
