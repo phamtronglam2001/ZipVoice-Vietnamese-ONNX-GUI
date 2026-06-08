@@ -10,7 +10,7 @@ Weights exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hy
 
 ## Features
 
-- Zero-shot voice: bundled voices in `assets/` or upload WAV + transcript
+- Zero-shot voice: bundled voices in `assets/` (`ref_info.json` or `sample_audio/` pairs) or upload WAV/MP3 + transcript
 - **int4** / **int8** quant (CPU or CUDA/DirectML via ONNX Runtime)
 - Configurable text normalization pipeline (optional dot_newline step, extensible registry in `src/text/normalizers/`)
 - Chunk **min / max characters**; short micro-segments merged with `\n` before one synthesis call
@@ -40,6 +40,29 @@ All `.bat` launchers set `PYTHONPATH=%~dp0src` then invoke modules under `src/`.
 | **GUI (Gradio — recommended)** | `run_gui.bat` (auto CPU/GPU) or `run_cpu.bat` / `run_gpu.bat` |
 | **CLI** | `run_cli.bat` → `src/cli_tts.py` |
 | ~~Slint desktop~~ | `run_slint_gui.bat` — **not ready**, see [TODO](#todo) |
+
+### Gradio tabs
+
+| Tab | Contents |
+|-----|----------|
+| **Giọng & văn bản** | Reference voice, input text, output file, preview audio, status log |
+| **Chuẩn hoá text** | Input mode, normalize preview / export `.txt` |
+| **Chuẩn hóa & chunk** | Normalization pipeline, min/max chunk, audiobook pauses |
+| **Hiệu năng & preset** | Speed, ONNX quant, GPU, workers, JSON presets |
+| **Debug** | Chunk preview, ODE seed, per-chunk WAV export |
+
+---
+
+## Reference voices (`assets/`)
+
+The app loads voices from **two formats** (merged in the voice dropdown; click **Refresh** after adding files):
+
+1. **`ref_info.json`** — each entry: `name`, `audio_path`, `text` (transcript required).
+2. **`sample_audio/`** — each voice = **one audio file + one `.txt` with the same stem** (e.g. `Bá-Vinh.mp3` + `Bá-Vinh.txt`).
+
+Supported audio: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, … See [`assets/README.txt`](assets/README.txt).
+
+Bundled: **9** voices from `ref_info.json` + **30** from `sample_audio/`.
 
 ---
 

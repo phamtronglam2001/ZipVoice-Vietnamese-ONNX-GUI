@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR = ROOT / "assets"
 OUTPUT_DIR = ROOT / "output"
 REF_INFO_JSON = ASSETS_DIR / "ref_info.json"
+# Thư mục con trong assets/: mỗi giọng = 1 file audio + 1 file .txt cùng tên (stem).
+REF_AUDIO_PAIR_DIRS = (
+    ASSETS_DIR / "sample_audio",
+)
+REF_AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".aac")
 
 FFMPEG_BIN = ROOT / "ffmpeg" / "bin"
 SYSTEM_FFMPEG_BIN = Path(r"C:\ffmpeg\bin")

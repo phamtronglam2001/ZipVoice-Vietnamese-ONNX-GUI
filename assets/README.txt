@@ -1,48 +1,62 @@
-Giọng mẫu được load từ ref_info.json + assets/ref_audio/*.wav
+Giọng mẫu được load theo HAI kiểu (gộp trong menu GUI):
 
 
 
-Đã kèm sẵn 9 giọng (xem bảng trong README.md):
+1) ref_info.json + file audio theo audio_path
 
-  yen_nhi, my_van, ai_vy, an_nhi, dieu_linh,
+   Đã kèm sẵn 9 giọng:
 
-  khanh_toan, tran_lam, nsnd_ha_phuong, nsnd_kim_cuc
+     yen_nhi, my_van, ai_vy, an_nhi, dieu_linh,
 
-
-
-Ví dụ assets/ref_info.json:
+     khanh_toan, tran_lam, nsnd_ha_phuong, nsnd_kim_cuc
 
 
 
-{
+   Ví dụ assets/ref_info.json:
 
-  "yen_nhi": {
+   {
 
-    "name": "Yến Nhi",
+     "yen_nhi": {
 
-    "audio_path": "assets/ref_audio/yen_nhi.wav",
+       "name": "Yến Nhi",
 
-    "text": "nội dung lời nói trong file wav..."   ← BẮT BUỘC (không auto transcribe)
+       "audio_path": "assets/ref_audio/yen_nhi.wav",
 
-  }
+       "text": "nội dung lời nói trong file wav..."   ← BẮT BUỘC (không auto transcribe)
 
-}
+     }
 
-
-
-audio_path tìm theo thứ tự:
-
-  assets/<path>
-
-  <project_root>/<path>
-
-  assets/ref_audio/<tên file>
-
-  data/ref_audio/<tên file>
+   }
 
 
 
-Sau khi sửa JSON, bấm "Làm mới danh sách" trên GUI.
+   audio_path tìm theo thứ tự:
+
+     assets/<path>
+
+     <project_root>/<path>
+
+     assets/ref_audio/<tên file>
+
+     data/ref_audio/<tên file>
+
+
+
+2) Thư mục sample_audio/ — cặp audio + .txt cùng tên (stem)
+
+   Đã kèm sẵn 30 giọng (ví dụ Bá-Vinh.mp3 + Bá-Vinh.txt).
+
+   Định dạng audio: .wav, .mp3, .flac, .ogg, .m4a, .opus, .aac
+
+   ID trong app: sample_audio__<tên file>
+
+
+
+   Thêm giọng mới: copy vào assets/sample_audio/ rồi bấm «Làm mới danh sách» trên GUI.
+
+
+
+Sau khi sửa JSON hoặc thêm file trong sample_audio/, bấm "Làm mới danh sách" trên GUI.
 
 
 
@@ -73,6 +87,5 @@ Nguồn GitHub — xem README.md / README_EN.md:
 
 
 LICENSE: chỉ nghiên cứu / giáo dục / phi lợi nhuận — cấm thương mại.
-
 
 

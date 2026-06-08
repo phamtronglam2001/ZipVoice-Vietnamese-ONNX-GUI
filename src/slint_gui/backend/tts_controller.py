@@ -8,7 +8,14 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from assets_loader import MANUAL_CHOICE, RefVoice, dropdown_choices, get_voice_by_id, scan_ref_voices
+from assets_loader import (
+    MANUAL_CHOICE,
+    RefVoice,
+    dropdown_choices,
+    format_voice_load_summary,
+    get_voice_by_id,
+    scan_ref_voices,
+)
 from config import (
     is_force_cpu,
     is_onnx_gpu_env,
@@ -93,9 +100,7 @@ class TTSController:
     def refresh_voices(self) -> tuple[list[tuple[str, str]], str]:
         self.voices = scan_ref_voices()
         choices = dropdown_choices(self.voices)
-        info = f"Đã load {len(self.voices)} giọng từ ref_info.json"
-        if not self.voices:
-            info += " — chưa có giọng hợp lệ trong assets/ref_info.json"
+        info = format_voice_load_summary(self.voices)
         return choices, info
 
     def voice_labels(self) -> list[str]:
@@ -111,7 +116,7 @@ class TTSController:
             return "", "", "Chế độ: upload thủ công"
         note = f"Đã chọn: {voice.id}"
         if not voice.transcript:
-            note += " — chưa có text trong ref_info.json, bắt buộc điền ô số 2."
+            note += " — chưa có transcript, bắt buộc điền ô số 2."
         return voice.audio_path, voice.transcript, note
 
     def pipeline_display(self) -> str:

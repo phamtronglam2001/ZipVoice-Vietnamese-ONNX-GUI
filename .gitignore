@@ -11,6 +11,7 @@ output/*
 !output/.gitkeep
 *.png
 *.mp3
+!assets/sample_audio/*.mp3
 .install_mode
 logs/
 .gradio/

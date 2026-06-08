@@ -22,7 +22,7 @@ RE_MINOR_PUNCT = re.compile(r"(?<=[,;:\-–—])\s+")
 RE_CHAPTER_HEADING = re.compile(
     r"^(?:"
     r"(?:chương|phần|mục|chapter|part)\s+[\dIVXLCivxlc]+"
-    r"|chương\s+thứ\s+"
+    r"|chương\s+(?:thứ\s+)?"
     r"(?:nhất|một|hai|ba|tư|năm|sáu|bảy|tám|chín|mười(?:\s+một|\s+hai)?)"
     r"|lời\s+nói\s+đầu"
     r"|phụ\s+lục"
@@ -239,6 +239,9 @@ def _merge_tiny_chunks(
         ch = merged[i]
         text = ch.text.strip()
         if _is_too_short_for_synthesis(text, min_chars):
+            if ch.is_chapter_break:
+                i += 1
+                continue
             nxt = merged[i + 1]
             new_text = _join_merged_chunk_parts(ch.text, nxt.text)
             merged[i + 1] = TtsChunk(
@@ -264,6 +267,8 @@ def _merge_tiny_chunks(
         last_text = last.text.strip()
         if _is_too_short_for_synthesis(last_text, min_chars) and not last.is_chapter_break:
             prev = merged[-2]
+            if prev.is_chapter_break:
+                return merged
             new_text = _join_merged_chunk_parts(prev.text, last.text)
             merged[-2] = TtsChunk(
                 text=new_text,

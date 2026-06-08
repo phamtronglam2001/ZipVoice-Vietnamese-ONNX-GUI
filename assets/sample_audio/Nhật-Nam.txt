@@ -1,0 +1,1 @@
+Một ví dụ là sử dụng mã hóa để bảo vệ thông tin giao dịch của khách hàng.

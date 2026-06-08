@@ -12,7 +12,13 @@ from collections.abc import Iterator
 
 import gradio as gr
 
-from assets_loader import MANUAL_CHOICE, dropdown_choices, get_voice_by_id, scan_ref_voices
+from assets_loader import (
+    MANUAL_CHOICE,
+    dropdown_choices,
+    format_voice_load_summary,
+    get_voice_by_id,
+    scan_ref_voices,
+)
 from config import (
     ASSETS_DIR,
     OUTPUT_DIR,
@@ -114,11 +120,25 @@ GRADIO_UNICODE_TEXTBOX_CSS = """
     resize: vertical !important;
 }
 .zv-scroll-text textarea {
-    max-height: 60vh !important;
-    overflow-y: scroll !important;
+    max-height: 42vh !important;
+    overflow-y: auto !important;
+}
+.zv-scroll-text-sm textarea {
+    max-height: 28vh !important;
+    overflow-y: auto !important;
+}
+#zv-action-bar {
+    border-top: 1px solid var(--border-color-primary);
+    padding-top: 0.75rem;
+    margin-top: 0.5rem;
+}
+#zv-action-bar .primary {
+    min-height: 2.75rem;
+    font-weight: 600;
 }
 """
 TEXTBOX_UNICODE_CLASS = "zv-unicode-text zv-scroll-text"
+TEXTBOX_UNICODE_SM_CLASS = "zv-unicode-text zv-scroll-text-sm"
 _voice_cache: list = []
 
 
@@ -126,12 +146,7 @@ def _refresh_voices() -> tuple[gr.Dropdown, str]:
     global _voice_cache
     _voice_cache = scan_ref_voices()
     choices = dropdown_choices(_voice_cache)
-    info = f"Đã load **{len(_voice_cache)}** giọng từ `assets/ref_info.json`"
-    if not _voice_cache:
-        info += (
-            "\n\nChưa có giọng hợp lệ. Kiểm tra `assets/ref_info.json` "
-            "và đường dẫn `audio_path`."
-        )
+    info = format_voice_load_summary(_voice_cache)
     return gr.Dropdown(choices=choices, value=MANUAL_CHOICE), info
 
 
@@ -141,7 +156,7 @@ def _on_voice_pick(voice_id: str) -> tuple[str | None, str, str]:
         return None, "", "Chế độ: upload thủ công"
     note = f"Đã chọn: `{voice.id}`"
     if not voice.transcript:
-        note += " — **chưa có `text` trong ref_info.json**, bắt buộc điền ô số 2."
+        note += " — **chưa có transcript**, bắt buộc điền ô số 2."
     return voice.audio_path, voice.transcript, note
 
 
@@ -745,259 +760,309 @@ def build_ui() -> gr.Blocks:
 
     with gr.Blocks(title="ZipVoice Vietnamese ONNX TTS") as demo:
         gen_txt_source_path = gr.State(value=None)
-        gr.Markdown(
-            f"""
-# ZipVoice Vietnamese ONNX TTS
+        norm_pipeline_state = gr.State(value=[])
+        synth_guidance_scale = gr.State(value=1.0)
+        synth_t_shift = gr.State(value=0.5)
 
-Inference qua **ONNX Runtime** (ZipVoice) + **{VOCODER_RUNTIME_LABEL}**.
-Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
-            """
+        gr.Markdown(
+            f"**ZipVoice Vietnamese ONNX TTS** — {VOCODER_RUNTIME_LABEL} · "
+            "`assets/` giọng mẫu · `output/` file xuất"
         )
         if not vocoder_onnx_ready():
             gr.Markdown(
-                f"⚠️ **Thiếu ONNX vocoder** trong `{VOCODER_DIR}`.\n\n"
+                f"⚠️ Thiếu ONNX vocoder trong `{VOCODER_DIR}`. "
                 f"{vocoder_deploy_instructions()}"
-            )
-
-        with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("### Giọng mẫu (assets/)")
-                voice_dropdown = gr.Dropdown(
-                    label="Chọn giọng có sẵn",
-                    choices=initial_choices,
-                    value=MANUAL_CHOICE,
-                    interactive=True,
-                )
-                refresh_btn = gr.Button("Làm mới danh sách", size="sm")
-                asset_info = gr.Markdown(
-                    f"Đã load **{len(_voice_cache)}** giọng từ `ref_info.json`"
-                )
-                ref_audio = gr.Audio(
-                    label="Hoặc upload giọng mẫu (3–15 giây)",
-                    type="filepath",
-                )
-            with gr.Column(scale=2):
-                ref_text = gr.Textbox(
-                    label="2) Nội dung TRONG file giọng mẫu (bắt buộc)",
-                    placeholder="Tự điền từ ref_info.json khi chọn giọng",
-                    lines=3,
-                    max_lines=12,
-                    elem_classes=[TEXTBOX_UNICODE_CLASS],
-                )
-                gen_text = gr.Textbox(
-                    label="3) Văn bản CẦN ĐỌC (output TTS)",
-                    placeholder="Văn bản bạn muốn tổng hợp bằng giọng mẫu...",
-                    lines=12,
-                    max_lines=40,
-                    elem_classes=[TEXTBOX_UNICODE_CLASS],
-                )
-                gen_txt_file = gr.File(
-                    label="Hoặc upload file .txt / .md (điền vào ô 3)",
-                    file_types=[".txt", ".text", ".md"],
-                    type="filepath",
-                )
-                input_mode = gr.Radio(
-                    label="Chế độ văn bản đầu vào",
-                    choices=[(label, key) for key, label in INPUT_MODE_CHOICES.items()],
-                    value="raw",
-                    info="Chọn «Đã chuẩn hóa» khi dùng file .txt đã xuất và chỉnh sửa — không chạy pipeline lại.",
-                )
-
-        with gr.Accordion("Preset — toàn bộ cấu hình đọc sách", open=False):
-            gr.Markdown(
-                "Preset lưu **giọng, pipeline chuẩn hóa, chunk, nghỉ, tổng hợp, xuất file**. "
-                "Tải preset để áp dụng mọi thiết lập cho audiobook nhất quán."
-            )
-            _preset_choices = preset_dropdown_choices()
-            preset_dropdown = gr.Dropdown(
-                label="Chọn preset (profiles/*.json)",
-                choices=_preset_choices,
-                value=_preset_choices[0][1] if _preset_choices else None,
-                interactive=True,
-            )
-            with gr.Row():
-                preset_load_btn = gr.Button("Tải preset", variant="secondary")
-                preset_save_name = gr.Textbox(
-                    label="Tên lưu preset",
-                    placeholder="vd: sach_ai_vy",
-                    scale=2,
-                )
-                preset_save_btn = gr.Button("Lưu preset", scale=1)
-            preset_status = gr.Markdown("")
-            synth_guidance_scale = gr.State(value=1.0)
-            synth_t_shift = gr.State(value=0.5)
-
-        with gr.Row():
-            speed = gr.Slider(0.3, 2.0, value=1.0, step=0.1, label="Tốc độ")
-            export_format = gr.Dropdown(
-                label="Định dạng xuất",
-                choices=list(EXPORT_CHOICES.keys()),
-                value="WAV 24kHz",
-            )
-            from onnx_quant import QUANT_MODE_CHOICES
-
-            _default_quant = get_onnx_quant_mode()
-            onnx_quant_mode = gr.Dropdown(
-                label="ONNX quant mode",
-                choices=list(QUANT_MODE_CHOICES),
-                value=_default_quant,
-                info="Tự khớp quantization.json hoặc auto-detect int4/int8 từ models/onnx/",
             )
 
         _norm_add_choices = [(label, key) for key, label in NORMALIZE_ADD_CHOICES.items()]
         _default_sel = pipeline_selector_choices(DEFAULT_NORMALIZE_PIPELINE)
-        with gr.Row():
-            with gr.Column(scale=2):
-                gr.Markdown(
-                    "### Pipeline chuẩn hóa\n"
-                    "1. **Chọn loại chuẩn hóa** → **Thêm vào pipeline** · "
-                    "2. Chọn bước trong **Pipeline hiện tại** → **Lên** / **Xuống** / **Xóa** · "
-                    "3. **Xem trước chuẩn hóa** và **TTS** dùng cùng pipeline.\n\n"
-                    "Mặc định: **pipeline trống** (chỉ post-process). Preset sách: toàn bộ chuẩn hóa (sea-g2p → … → VieNeu)."
+        _default_gpu = is_onnx_gpu_env()
+        _initial_gpu = _default_gpu and not is_force_cpu()
+        from onnx_quant import QUANT_MODE_CHOICES
+
+        _default_quant = get_onnx_quant_mode()
+
+        with gr.Tabs():
+            with gr.Tab("Giọng & văn bản"):
+                with gr.Row():
+                    voice_dropdown = gr.Dropdown(
+                        label="Giọng mẫu (assets/)",
+                        choices=initial_choices,
+                        value=MANUAL_CHOICE,
+                        scale=4,
+                    )
+                    refresh_btn = gr.Button("Làm mới", size="sm", scale=1, min_width=80)
+                asset_info = gr.Markdown(format_voice_load_summary(_voice_cache))
+                with gr.Row(equal_height=False):
+                    ref_audio = gr.Audio(
+                        label="Upload giọng mẫu (3–15s)",
+                        type="filepath",
+                        scale=1,
+                    )
+                    ref_text = gr.Textbox(
+                        label="Transcript giọng mẫu (bắt buộc)",
+                        placeholder="Tự điền khi chọn giọng assets/",
+                        lines=2,
+                        max_lines=8,
+                        scale=2,
+                        elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                    )
+                gen_text = gr.Textbox(
+                    label="Văn bản cần đọc (output TTS)",
+                    placeholder="Nhập hoặc upload .txt / .md bên dưới…",
+                    lines=10,
+                    max_lines=40,
+                    elem_classes=[TEXTBOX_UNICODE_CLASS],
                 )
-                norm_pipeline_state = gr.State(value=[])
+                with gr.Row():
+                    gen_txt_file = gr.File(
+                        label="Upload .txt / .md",
+                        file_types=[".txt", ".text", ".md"],
+                        type="filepath",
+                        scale=2,
+                    )
+                save_status = gr.Markdown("")
+                with gr.Row():
+                    output_file = gr.File(label="File output", type="filepath", scale=1)
+                    output_audio = gr.Audio(label="Nghe thử", type="filepath", scale=1)
+                status_log_box = gr.Textbox(
+                    label="Nhật ký trạng thái",
+                    lines=10,
+                    max_lines=40,
+                    interactive=False,
+                    elem_classes=[TEXTBOX_UNICODE_CLASS],
+                    placeholder="Bấm Tổng hợp để xem log từng bước…",
+                )
+
+            with gr.Tab("Chuẩn hoá text"):
+                input_mode = gr.Radio(
+                    label="Chế độ đầu vào",
+                    choices=[(label, key) for key, label in INPUT_MODE_CHOICES.items()],
+                    value="raw",
+                    info="«Đã chuẩn hóa» = bỏ qua pipeline khi TTS.",
+                )
+                with gr.Row():
+                    preview_norm_btn = gr.Button(
+                        "Xem trước chuẩn hóa",
+                        size="sm",
+                        variant="secondary",
+                    )
+                    export_norm_btn = gr.Button(
+                        "Xuất .txt",
+                        size="sm",
+                        variant="secondary",
+                    )
+                norm_preview = gr.Textbox(
+                    label="Text đã chuẩn hóa",
+                    lines=8,
+                    max_lines=30,
+                    interactive=False,
+                    elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                    placeholder="Bấm «Xem trước chuẩn hóa» hoặc sau TTS…",
+                )
+                export_norm_path = gr.Textbox(
+                    label="Đường dẫn xuất (để trống → output/)",
+                    placeholder="output/<tên>_normalized.txt",
+                    lines=1,
+                )
+                export_norm_status = gr.Markdown("")
+
+            with gr.Tab("Chuẩn hóa & chunk"):
+                gr.Markdown(
+                    "Thêm bước chuẩn hóa → sắp xếp. Xem trước / xuất `.txt` ở tab **Chuẩn hoá text**. "
+                    "Preset sách: **Sách/Audiobook**."
+                )
                 with gr.Row():
                     norm_add_step = gr.Dropdown(
-                        label="Chọn loại chuẩn hóa",
+                        label="Loại chuẩn hóa",
                         choices=_norm_add_choices,
                         value="vieneu",
                         scale=3,
                     )
-                    norm_add_btn = gr.Button("Thêm vào pipeline", size="sm", scale=1)
+                    norm_add_btn = gr.Button("Thêm", size="sm", scale=1, min_width=72)
                 norm_sel_step = gr.Dropdown(
-                    label="Pipeline hiện tại — chọn bước để sửa",
+                    label="Chọn bước trong pipeline",
                     choices=_default_sel,
                     value=_default_sel[0][1] if _default_sel else None,
                 )
                 with gr.Row():
-                    norm_up_btn = gr.Button("Lên", size="sm", min_width=60)
-                    norm_down_btn = gr.Button("Xuống", size="sm", min_width=60)
-                    norm_remove_btn = gr.Button("Xóa", size="sm", min_width=60)
-                    norm_reset_btn = gr.Button("Mặc định", size="sm", min_width=80)
+                    norm_up_btn = gr.Button("↑", size="sm", min_width=48)
+                    norm_down_btn = gr.Button("↓", size="sm", min_width=48)
+                    norm_remove_btn = gr.Button("Xóa", size="sm", min_width=64)
+                    norm_reset_btn = gr.Button("Trống", size="sm", min_width=64)
                     norm_audiobook_btn = gr.Button(
-                        "Preset: Sách/Audiobook", size="sm", min_width=140
-                    )
-                    pipeline_quick_save_name = gr.Textbox(
-                        label="Tên lưu preset",
-                        placeholder="vd: sach_ai_vy",
-                        scale=2,
-                        min_width=120,
-                    )
-                    pipeline_quick_save_btn = gr.Button(
-                        "Lưu preset", size="sm", min_width=90
+                        "Preset Sách", size="sm", min_width=100
                     )
                 norm_pipeline_display = gr.Markdown(
                     value=format_normalize_pipeline_list([])
                 )
-            with gr.Row():
-                chunk_min_chars = gr.Slider(
-                    12,
-                    150,
-                    value=70,
-                    step=5,
-                    label="Min ký tự / chunk",
-                    info=(
-                        "Gộp micro-chunk (< ngưỡng) vào chunk liền kề trước synthesize — "
-                        "nối bằng xuống dòng trong text, không phải nghỉ giữa chunk thường. "
-                        "Tránh mel yếu / lạc giọng. Mặc định 70."
-                    ),
+                with gr.Row():
+                    chunk_min_chars = gr.Slider(
+                        12,
+                        150,
+                        value=70,
+                        step=5,
+                        label="Min ký tự / chunk",
+                        info="Gộp micro-chunk ngắn. Mặc định 70.",
+                    )
+                    chunk_max_chars = gr.Slider(
+                        80,
+                        220,
+                        value=135,
+                        step=5,
+                        label="Max ký tự / chunk",
+                        info="Giảm nếu OOM.",
+                    )
+                with gr.Accordion("Nghỉ audiobook", open=False):
+                    with gr.Row():
+                        pause_sentence = gr.Slider(
+                            0.1, 1.5, value=PAUSE_SENTENCE_DEFAULT, step=0.05,
+                            label="Câu (s)",
+                        )
+                        pause_paragraph = gr.Slider(
+                            0.2, 2.0, value=PAUSE_PARAGRAPH_DEFAULT, step=0.05,
+                            label="Đoạn (s)",
+                        )
+                        pause_chapter = gr.Slider(
+                            0.5, 4.0, value=PAUSE_CHAPTER_DEFAULT, step=0.1,
+                            label="Chương (s)",
+                        )
+                    with gr.Row():
+                        pause_enum_item = gr.Slider(
+                            0.2, 2.5, value=PAUSE_ENUM_DEFAULT, step=0.05,
+                            label="Liệt kê (s)",
+                        )
+                        pause_forced = gr.Slider(
+                            0.05, 0.8, value=PAUSE_FORCED_SPLIT_DEFAULT, step=0.01,
+                            label="Cắt phẩy (s)",
+                        )
+            with gr.Tab("Hiệu năng & preset"):
+                with gr.Row():
+                    speed = gr.Slider(
+                        0.3, 2.0, value=1.0, step=0.1, label="Tốc độ"
+                    )
+                    export_format = gr.Dropdown(
+                        label="Định dạng xuất",
+                        choices=list(EXPORT_CHOICES.keys()),
+                        value="WAV 24kHz",
+                    )
+                    onnx_quant_mode = gr.Dropdown(
+                        label="ONNX quant",
+                        choices=list(QUANT_MODE_CHOICES),
+                        value=_default_quant,
+                        info="int8 → VRAM CUDA; int4 có thể CPU fallback.",
+                    )
+                use_onnx_gpu = gr.Checkbox(
+                    label="Dùng GPU (CUDA / DirectML)",
+                    value=_default_gpu,
                 )
-                chunk_max_chars = gr.Slider(
-                    80,
-                    220,
-                    value=135,
-                    step=5,
-                    label="Max ký tự / chunk",
-                    info="ZipVoice ~100 token/chunk. Giảm nếu OOM; tăng nhẹ cho đoạn ngắn.",
+                runtime_device_display = gr.Textbox(
+                    label="Thiết bị ONNX Runtime",
+                    value=_predict_runtime_device(_default_gpu),
+                    interactive=False,
+                    lines=1,
+                    max_lines=3,
+                    elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
                 )
-        with gr.Accordion("Tinh chỉnh nghỉ (audiobook)", open=False):
-            with gr.Row():
-                pause_sentence = gr.Slider(
-                    0.1, 1.5, value=PAUSE_SENTENCE_DEFAULT, step=0.05,
-                    label="Nghỉ câu (s)",
-                )
-                pause_paragraph = gr.Slider(
-                    0.2, 2.0, value=PAUSE_PARAGRAPH_DEFAULT, step=0.05,
-                    label="Nghỉ đoạn (s)",
-                )
-                pause_chapter = gr.Slider(
-                    0.5, 4.0, value=PAUSE_CHAPTER_DEFAULT, step=0.1,
-                    label="Nghỉ chương (s)",
-                )
-                pause_enum_item = gr.Slider(
-                    0.2, 2.5, value=PAUSE_ENUM_DEFAULT, step=0.05,
-                    label="Nghỉ mục liệt kê (s)",
-                )
-                pause_forced = gr.Slider(
-                    0.05, 0.8, value=PAUSE_FORCED_SPLIT_DEFAULT, step=0.01,
-                    label="Nghỉ cắt phẩy (s)",
-                )
+                with gr.Row():
+                    parallel_workers = gr.Slider(
+                        1,
+                        ui_parallel_workers_max(use_gpu=_initial_gpu),
+                        value=1,
+                        step=1,
+                        label="Workers song song",
+                        info=_worker_slider_info(_initial_gpu),
+                    )
+                    onnx_threads = gr.Slider(
+                        0,
+                        min(16, os.cpu_count() or 8),
+                        value=0,
+                        step=1,
+                        label="ORT threads (0=auto)",
+                        info=f"Auto ≈ {onnx_num_threads()} core",
+                    )
+                    inference_batch_size = gr.Slider(
+                        1, 8, value=1, step=1,
+                        label="Batch GPU",
+                        info="Gom N chunk/lần fm_decoder",
+                    )
+                with gr.Row():
+                    synth_num_step = gr.Slider(
+                        4, 32, value=16, step=1,
+                        label="ODE num_step",
+                        info="Giảm 8–12 = nhanh hơn; 16 = mặc định.",
+                    )
+                    ode_solver = gr.Dropdown(
+                        label="ODE solver",
+                        choices=list(ODE_SOLVERS),
+                        value="euler",
+                    )
+                    pipeline_overlap = gr.Checkbox(
+                        label="Pipeline overlap (CPU tokenize song song)",
+                        value=True,
+                    )
+                with gr.Accordion("Preset JSON (profiles/)", open=False):
+                    gr.Markdown(
+                        "Lưu/tải toàn bộ cấu hình: giọng, pipeline, chunk, nghỉ, synth, GPU."
+                    )
+                    _preset_choices = preset_dropdown_choices()
+                    preset_dropdown = gr.Dropdown(
+                        label="Preset",
+                        choices=_preset_choices,
+                        value=_preset_choices[0][1] if _preset_choices else None,
+                    )
+                    with gr.Row():
+                        preset_load_btn = gr.Button("Tải", size="sm")
+                        preset_save_name = gr.Textbox(
+                            label="Tên lưu",
+                            placeholder="vd: sach_ai_vy",
+                            scale=2,
+                            lines=1,
+                        )
+                        preset_save_btn = gr.Button("Lưu", size="sm", scale=1)
+                    preset_status = gr.Markdown("")
 
-        _max_cpu_workers = max_parallel_workers(use_gpu=False)
-        _default_gpu = is_onnx_gpu_env()
-        with gr.Accordion("Hiệu năng", open=False):
-            use_onnx_gpu = gr.Checkbox(
-                label="Dùng GPU (CUDA / DirectML)",
-                value=_default_gpu,
-                info=(
-                    "Cần cài onnxruntime-gpu (NVIDIA CUDA) hoặc ORT có DirectML. "
-                    "Env: ZIPVOICE_ONNX_GPU=1. INT4 có thể chạy CPU fallback."
-                ),
+            with gr.Tab("Debug"):
+                with gr.Accordion("Chunk, seed, export WAV", open=True):
+                    preview_chunks_btn = gr.Button(
+                        "Xem trước chunk", size="sm", variant="secondary"
+                    )
+                    chunk_preview = gr.Textbox(
+                        label="Chunk preview",
+                        lines=6,
+                        max_lines=30,
+                        interactive=False,
+                        elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                    )
+                    with gr.Row():
+                        ode_seed_input = gr.Number(
+                            label="ODE seed",
+                            value=42,
+                            precision=0,
+                            minimum=0,
+                            maximum=2**31 - 1,
+                        )
+                        use_fixed_seed_cb = gr.Checkbox(
+                            label="Seed cố định",
+                            value=True,
+                        )
+                        same_seed_all_chunks_cb = gr.Checkbox(
+                            label="Cùng seed mọi chunk",
+                            value=False,
+                        )
+                    export_chunks_btn = gr.Button(
+                        "Export từng chunk WAV", size="sm", variant="secondary"
+                    )
+                    export_chunks_status = gr.Markdown(
+                        "Xuất vào `output/chunk_test/` — WAV + manifest.txt"
+                    )
+
+        with gr.Group(elem_id="zv-action-bar"):
+            btn = gr.Button(
+                "Tổng hợp giọng nói (ONNX)",
+                variant="primary",
             )
-            runtime_device_display = gr.Textbox(
-                label="Thiết bị thực tế (ONNX Runtime)",
-                value=_predict_runtime_device(_default_gpu),
-                interactive=False,
-                lines=2,
-                max_lines=4,
-                elem_classes=[TEXTBOX_UNICODE_CLASS],
-            )
-            _initial_gpu = _default_gpu and not is_force_cpu()
-            parallel_workers = gr.Slider(
-                1,
-                ui_parallel_workers_max(use_gpu=_initial_gpu),
-                value=1,
-                step=1,
-                label="Số luồng chunk song song (workers)",
-                info=_worker_slider_info(_initial_gpu),
-            )
-            onnx_threads = gr.Slider(
-                0,
-                min(16, os.cpu_count() or 8),
-                value=0,
-                step=1,
-                label="ORT threads (0 = auto)",
-                info=f"Mặc định auto ≈ {onnx_num_threads()} core. Env: ZIPVOICE_ONNX_THREADS",
-            )
-            inference_batch_size = gr.Slider(
-                1,
-                8,
-                value=1,
-                step=1,
-                label="Batch size (GPU tuần tự)",
-                info="Gom N chunk/lần fm_decoder. Env: ZIPVOICE_INFERENCE_BATCH",
-            )
-            synth_num_step = gr.Slider(
-                4,
-                32,
-                value=16,
-                step=1,
-                label="Số bước ODE (num_step)",
-                info=(
-                    "Mỗi bước = 1 lần gọi fm_decoder. Giảm (8–12) = nhanh hơn; "
-                    "16 = mặc định chất lượng. Nên dùng Euler."
-                ),
-            )
-            ode_solver = gr.Dropdown(
-                label="ODE solver",
-                choices=list(ODE_SOLVERS),
-                value="euler",
-                info="heun/midpoint: ít bước hơn có thể giữ chất lượng; mỗi bước tốn thêm 1× fm_decoder",
-            )
-            pipeline_overlap = gr.Checkbox(
-                label="Pipeline overlap (tokenize chunk kế tiếp trên CPU)",
-                value=True,
-            )
+
         use_onnx_gpu.change(
             _predict_runtime_device,
             inputs=[use_onnx_gpu],
@@ -1007,115 +1072,6 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             _update_parallel_workers_slider,
             inputs=[use_onnx_gpu, parallel_workers],
             outputs=[parallel_workers],
-        )
-
-        with gr.Row():
-            preview_norm_btn = gr.Button(
-                "Xem trước chuẩn hóa (ô 3)",
-                size="sm",
-                variant="secondary",
-            )
-            export_norm_btn = gr.Button(
-                "Xuất text đã chuẩn hóa (.txt)",
-                size="sm",
-                variant="secondary",
-            )
-        export_norm_path = gr.Textbox(
-            label="Đường dẫn xuất .txt (tùy chọn)",
-            placeholder="Để trống → output/<tên_file>_normalized.txt",
-            lines=1,
-        )
-        export_norm_status = gr.Markdown("")
-        norm_preview = gr.Textbox(
-            label="Text đã chuẩn hóa (đầy đủ) — xem trước / sau TTS",
-            lines=16,
-            max_lines=50,
-            interactive=False,
-            elem_classes=[TEXTBOX_UNICODE_CLASS],
-            placeholder="Cấu hình pipeline → nhập văn bản ô 3 → Xem trước hoặc Xuất .txt",
-        )
-
-        with gr.Row():
-            btn = gr.Button(
-                "Tổng hợp giọng nói (ONNX)",
-                variant="primary",
-            )
-        save_status = gr.Markdown("")
-        status_log_box = gr.Textbox(
-            label="Nhật ký trạng thái (debug)",
-            lines=14,
-            max_lines=40,
-            interactive=False,
-            elem_classes=[TEXTBOX_UNICODE_CLASS],
-            placeholder="Nhấn Tổng hợp để xem từng bước: đầu vào, chuẩn hóa, chunk, ONNX, tổng hợp...",
-        )
-
-        with gr.Accordion("Debug — công cụ phát triển", open=True):
-            preview_chunks_btn = gr.Button(
-                "Xem trước chunk (ô 3)",
-                size="sm",
-                variant="secondary",
-            )
-            chunk_preview = gr.Textbox(
-                label="Xem trước chunk / micro-chunk — trước TTS",
-                lines=16,
-                max_lines=50,
-                interactive=False,
-                elem_classes=[TEXTBOX_UNICODE_CLASS],
-                placeholder=(
-                    "Cấu hình pipeline + min/max chunk + nghỉ → nhập văn bản ô 3 → "
-                    "Xem trước chunk. [NL] = xuống dòng (nghỉ nội bộ sau gộp micro-chunk)."
-                ),
-            )
-            with gr.Row():
-                ode_seed_input = gr.Number(
-                    label="ODE seed",
-                    value=42,
-                    precision=0,
-                    minimum=0,
-                    maximum=2**31 - 1,
-                    scale=1,
-                    info="Seed cơ sở ODE. Mặc định mỗi chunk = base + chỉ số (0-based).",
-                )
-                use_fixed_seed_cb = gr.Checkbox(
-                    label="Cố định seed ODE",
-                    value=True,
-                    scale=1,
-                    info="Bật: seed cố định (ổn định). Tắt: random mỗi chunk (hành vi cũ, có thể gây artifact).",
-                )
-                same_seed_all_chunks_cb = gr.Checkbox(
-                    label="Cùng seed mọi chunk",
-                    value=False,
-                    scale=1,
-                    info="Debug: mọi chunk dùng đúng ODE seed (không + chỉ số). So sánh drift int4.",
-                )
-            export_chunks_btn = gr.Button(
-                "Export từng chunk WAV (debug)",
-                size="sm",
-                variant="secondary",
-            )
-            export_chunks_status = gr.Markdown(
-                "Xuất mỗi chunk thành WAV riêng vào `output/chunk_test/` "
-                "(dùng giọng, văn bản ô 3, pipeline, quant và GPU hiện tại). "
-                "Kết quả: `chunk_NNN.wav` + `manifest.txt`. Chỉ Gradio."
-            )
-
-        with gr.Row():
-            output_file = gr.File(label="Tải file output/", type="filepath")
-            output_audio = gr.Audio(label="Nghe thử", type="filepath")
-
-        gr.Markdown(
-            """
-**ONNX quant:** INT4 cần `text_encoder_int4.onnx` + `fm_decoder_int4.onnx` — export từ PyTorch GUI hoặc `quantize_onnx.py --mode int4`.
-
-**Mẹo soạn manuscript (audiobook)**
-
-- Xuống dòng = đoạn mới; dòng `Chương 1` / `Lời nói đầu` / `Phụ lục` → nghỉ chương dài hơn.
-- Pipeline mặc định **trống** — giữ nguyên văn bản, chỉ dọn dấu câu. Dùng **Preset: Sách/Audiobook** khi cần pipeline đầy đủ (sea-g2p → … → VieNeu).
-- **Xem trước chuẩn hóa** để QC ranh giới chunk trước khi tổng hợp.
-
-**Cấu trúc:** `models/onnx/` + `models/vocoder/` · Nghỉ mặc định: 0.35s/câu, 0.65s/đoạn, 2.0s/chương, 0.28s/cắt phẩy.
-            """
         )
 
         gen_txt_file.change(
@@ -1156,37 +1112,6 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         )
         norm_reset_btn.click(_on_pipeline_reset, outputs=_pipeline_outputs)
         norm_audiobook_btn.click(_on_pipeline_audiobook_preset, outputs=_pipeline_outputs)
-        pipeline_quick_save_btn.click(
-            _on_save_preset,
-            inputs=[
-                pipeline_quick_save_name,
-                voice_dropdown,
-                ref_audio,
-                ref_text,
-                norm_pipeline_state,
-                chunk_min_chars,
-                chunk_max_chars,
-                pause_sentence,
-                pause_paragraph,
-                pause_chapter,
-                pause_enum_item,
-                pause_forced,
-                speed,
-                export_format,
-                onnx_quant_mode,
-                synth_num_step,
-                synth_guidance_scale,
-                synth_t_shift,
-                input_mode,
-                parallel_workers,
-                use_onnx_gpu,
-                onnx_threads,
-                inference_batch_size,
-                ode_solver,
-                pipeline_overlap,
-            ],
-            outputs=[preset_dropdown, preset_status],
-        )
         preset_load_btn.click(
             _on_load_preset,
             inputs=[preset_dropdown],

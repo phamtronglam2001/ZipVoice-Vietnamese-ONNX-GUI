@@ -10,7 +10,7 @@ Model weights export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.c
 
 ## Tính năng
 
-- Giọng zero-shot: chọn giọng trong `assets/` hoặc upload WAV + transcript
+- Giọng zero-shot: chọn giọng trong `assets/` (JSON hoặc thư mục `sample_audio/`) hoặc upload WAV/MP3 + transcript
 - Quant **int4** / **int8** (CPU hoặc CUDA/DirectML qua ONNX Runtime)
 - Pipeline chuẩn hóa text tùy chỉnh (VieNeu, dot_newline step, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
 - Chia chunk **min / max ký tự**; gộp micro-chunk ngắn bằng `\n` trước khi synth
@@ -42,6 +42,29 @@ Mọi launcher `.bat` đặt `PYTHONPATH=%~dp0src` rồi gọi module trong `src
 | ~~Slint desktop~~ | `run_slint_gui.bat` — **chưa dùng được**, xem [TODO](#todo) |
 
 Gradio: synth, preset, chunk preview, export debug, log ONNX. Slint tạm **không khuyến nghị** cho đến khi TODO xong.
+
+### Tab Gradio
+
+| Tab | Nội dung |
+|-----|----------|
+| **Giọng & văn bản** | Giọng mẫu, văn bản cần đọc, file output, nghe thử, nhật ký trạng thái |
+| **Chuẩn hoá text** | Chế độ đầu vào, xem trước / xuất `.txt` chuẩn hóa |
+| **Chuẩn hóa & chunk** | Pipeline chuẩn hóa, min/max chunk, nghỉ audiobook |
+| **Hiệu năng & preset** | Tốc độ, quant ONNX, GPU, workers, preset JSON |
+| **Debug** | Xem trước chunk, ODE seed, export WAV từng chunk |
+
+---
+
+## Giọng mẫu (`assets/`)
+
+App load **hai kiểu** (gộp trong menu «Giọng mẫu», bấm **Làm mới** sau khi thêm file):
+
+1. **`ref_info.json`** — mỗi entry có `name`, `audio_path`, `text` (transcript bắt buộc).
+2. **`sample_audio/`** — mỗi giọng = **một file audio + một file `.txt` cùng tên** (ví dụ `Bá-Vinh.mp3` + `Bá-Vinh.txt`).
+
+Hỗ trợ audio: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, … Chi tiết: [`assets/README.txt`](assets/README.txt).
+
+Bundled: **9** giọng trong `ref_info.json` + **30** giọng trong `sample_audio/`.
 
 ---
 
