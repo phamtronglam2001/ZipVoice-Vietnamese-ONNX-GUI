@@ -1,134 +1,215 @@
-# ZipVoice Vietnamese ONNX GUI
+<div align="center">
 
-TTS tiếng Việt zero-shot **offline**: ZipVoice ONNX (int4/int8) + vocoder Vocos 100 mel + GUI **Gradio** (khuyến nghị). GUI desktop **Slint** đang dở — xem [TODO](#todo).
+# 🎙️ ZipVoice Vietnamese ONNX GUI
 
-**Tác giả:** [Pham Trong Lam](https://github.com/phamtronglam2001) · **License:** Non-Commercial (`LICENSE`) · [English](README_EN.md)
+**Offline, zero-shot Vietnamese Text-to-Speech — clone any voice from a few seconds of audio, fully on-device.**
 
-Model weights export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h); vocoder bundled `models/vocoder/mel_spec_24khz.onnx`. Chi tiết license bên thứ ba: `models/THIRD_PARTY_LICENSES.md`.
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-int4%2Fint8-005CED?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Gradio](https://img.shields.io/badge/UI-Gradio-F97316)](https://www.gradio.app/)
+[![Release](https://img.shields.io/badge/release-v1.0.0-success)](https://github.com/phamtronglam2001/ZipVoice-Vietnamese-ONNX-GUI/releases/tag/v1.0.0)
+[![License](https://img.shields.io/badge/license-Non--Commercial-red)](LICENSE)
 
----
+**[Pham Trong Lam](https://github.com/phamtronglam2001)** · [Tiếng Việt](README_VI.md)
 
-## Tính năng
-
-- Giọng zero-shot: chọn giọng trong `assets/` (JSON hoặc thư mục `sample_audio/`) hoặc upload WAV/MP3 + transcript
-- Quant **int4** / **int8** (CPU hoặc CUDA/DirectML qua ONNX Runtime)
-- Pipeline chuẩn hóa text tùy chỉnh (VieNeu, dot_newline step, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
-- Chia chunk **min / max ký tự**; gộp micro-chunk ngắn bằng `\n` trước khi synth
-- Nghỉ audiobook: câu / đoạn / chương / enum / cắt phẩy
-- Preset JSON (`profiles/`), CLI (`run_cli.bat`)
-- Gradio: chunk preview + export từng chunk WAV, ODE seed, log thiết bị ONNX
+</div>
 
 ---
 
-## Cài đặt (Windows)
+## 📖 Overview
 
-| Script | Mục đích |
-|--------|----------|
-| `install_cpu.bat` | Tạo `.venv`, cài CPU deps, ghi `.install_mode=cpu` |
-| `install_gpu.bat` | Cài `onnxruntime-gpu` + CUDA DLL, ghi `.install_mode=gpu` |
+High-quality Vietnamese TTS usually means sending text to a paid cloud API — a problem for privacy-sensitive content, audiobooks, and offline/air-gapped use.
 
-Cần **Git LFS** để pull weights ONNX. Espeak qua wheel `piper_phonemize` (script cài tự xử lý).
+**ZipVoice Vietnamese ONNX GUI** runs the entire pipeline **locally**: it quantizes the [ZipVoice](https://github.com/k2-fsa/ZipVoice) flow-matching model to **ONNX int4/int8**, pairs it with a 100-mel Vocos vocoder, and wraps everything in a desktop-friendly **Gradio** app. Give it ~3–15 seconds of reference audio plus a transcript and it clones that voice for arbitrary Vietnamese text — no GPU required, no data leaves your machine.
+
+> **In one line:** a production-style, end-to-end neural TTS system — model quantization, a configurable text-normalization pipeline, parallel chunked inference, and a polished GUI — built for **long-form Vietnamese audiobooks**.
 
 ---
 
-## Chạy ứng dụng
+## ✨ Key Features
 
-Mọi launcher `.bat` đặt `PYTHONPATH=%~dp0src` rồi gọi module trong `src/`.
+- 🗣️ **Zero-shot voice cloning** — clone from a reference clip + transcript, or pick from **39 bundled voices**.
+- ⚡ **ONNX int4 / int8 quantization** — runs on CPU, or CUDA / DirectML via ONNX Runtime.
+- 🧩 **Configurable normalization pipeline** — composable steps (VieNeu, sentence-structure, sea-g2p, …) via an extensible registry.
+- 📚 **Audiobook-grade chunking** — smart min/max splitting, micro-chunk merging, and sentence / paragraph / chapter / enumeration pauses.
+- 🚀 **Performance tuning** — parallel chunk workers, prompt caching, GPU batching, and selectable ODE solvers.
+- 🎛️ **Polished Gradio GUI** — voice picker, live status log, normalization preview, per-chunk WAV export, and presets.
+- 💾 **JSON presets + CLI** — reproducible configs and batch-friendly automation.
 
-| Mục đích | Lệnh |
-|----------|------|
-| **GUI (Gradio — khuyến nghị)** | `run_gui.bat` (auto CPU/GPU) hoặc `run_cpu.bat` / `run_gpu.bat` |
+---
+
+## 🛠️ Engineering Highlights
+
+What this project demonstrates, beyond "calling a model":
+
+| Area | What was built |
+|------|----------------|
+| **Model optimization** | Quantized ZipVoice to ONNX **int4/int8**; bundled vocoder export (100-mel, aligned with `feat_dim`) + librosa ISTFT |
+| **Inference performance** | Parallel chunk workers, **prompt caching**, GPU batching, ODE-solver selection (`euler`/`heun`/`midpoint`), CPU/GPU pipeline overlap |
+| **Text processing** | Modular **normalizer registry** (plug-in steps), Vietnamese G2P via espeak/`piper_phonemize`, audiobook pause modeling |
+| **Cross-hardware support** | Auto CPU/GPU launch, CUDA + DirectML providers, runtime device introspection & diagnostics |
+| **Software design** | Shared `tts_pipeline` core reused across Gradio GUI, CLI, and an experimental Slint desktop UI; clean `src/` layout with unit tests |
+| **Productization** | One-click Windows installers, presets, status logging, licensing/attribution matrix |
+
+---
+
+## 🏗️ Architecture
+
+```
+            ┌────────────┐    ┌──────────────┐    ┌──────────────────┐
+  Text ───► │ Normalize  │──► │   Chunk      │──► │  Per chunk:       │
+            │ pipeline   │    │ (min/max +   │    │  Espeak G2P →     │
+            │ (registry) │    │  micro-merge)│    │  ZipVoice ONNX →  │
+            └────────────┘    └──────────────┘    │  Vocos + ISTFT    │
+                                                   └────────┬─────────┘
+                                                            ▼
+                                          ┌─────────────────────────────┐
+                                          │ Join WAV + pauses            │
+                                          │ (sentence/paragraph/chapter) │
+                                          └─────────────────────────────┘
+```
+
+Each TTS chunk is its own `generate()` call; pauses between chunks use `pause_after` (not newline merge). Over-short micro-chunks are joined with `\n` into a single synthesis call to avoid weak mel / voice drift.
+
+<details>
+<summary><strong>Repository layout</strong></summary>
+
+```
+src/
+  app.py                 # Gradio GUI (recommended entry)
+  cli_tts.py             # CLI entry
+  tts_pipeline.py        # Full TTS orchestration (shared core)
+  chunk_synthesis.py     # Parallel chunk workers
+  onnx_engine.py         # ZipVoice ONNX + vocoder decode
+  espeak_tokenizer.py    # piper_phonemize → tokens.txt
+  text/                  # chunking + normalization pipeline
+    normalizers/         # plug-in registry (vieneu, period_linebreak, dot_newline, …)
+  audio/                 # post-processing (join, pauses, ref-audio prep)
+  slint_gui/             # experimental desktop UI (WIP)
+assets/   models/   profiles/   scripts/   docs/
+```
+
+Full developer notes: **[docs/for_dev.md](docs/for_dev.md)**.
+
+</details>
+
+---
+
+## 🚀 Quickstart (Windows)
+
+```bat
+REM 1. Install (pick one)
+install_cpu.bat        REM CPU-only
+install_gpu.bat        REM onnxruntime-gpu + CUDA
+
+REM 2. Launch the GUI (auto CPU/GPU)
+run_gui.bat
+```
+
+> Requires **Git LFS** to pull the ONNX weights. Espeak is installed automatically via the `piper_phonemize` wheel.
+
+| Entry point | Command |
+|-------------|---------|
+| **GUI (recommended)** | `run_gui.bat` (or `run_cpu.bat` / `run_gpu.bat`) |
 | **CLI** | `run_cli.bat` → `src/cli_tts.py` |
-| ~~Slint desktop~~ | `run_slint_gui.bat` — **chưa dùng được**, xem [TODO](#todo) |
+| Slint desktop (experimental) | `run_slint_gui.bat` — see [Roadmap](#-roadmap) |
 
-Gradio: synth, preset, chunk preview, export debug, log ONNX. Slint tạm **không khuyến nghị** cho đến khi TODO xong.
+---
 
-### Tab Gradio
+## 🖥️ Usage
 
-| Tab | Nội dung |
+### Demo
+
+<!-- TODO: add a screenshot of the Gradio GUI here, e.g. ![GUI](docs/screenshot.png) -->
+> _Screenshot coming soon — drop a GUI capture at `docs/screenshot.png`._
+
+### Gradio tabs
+
+| Tab | Contents |
 |-----|----------|
-| **Giọng & văn bản** | Giọng mẫu, văn bản cần đọc, file output, nghe thử, nhật ký trạng thái |
-| **Chuẩn hoá text** | Chế độ đầu vào, xem trước / xuất `.txt` chuẩn hóa |
-| **Chuẩn hóa & chunk** | Pipeline chuẩn hóa, min/max chunk, nghỉ audiobook |
-| **Hiệu năng & preset** | Tốc độ, quant ONNX, GPU, workers, preset JSON |
-| **Debug** | Xem trước chunk, ODE seed, export WAV từng chunk |
+| **Giọng & văn bản** | Reference voice, input text, output file, audio preview, status log |
+| **Chuẩn hoá text** | Input mode, normalization preview / export `.txt` |
+| **Chuẩn hóa & chunk** | Normalization pipeline, min/max chunk, audiobook pauses |
+| **Hiệu năng & preset** | Speed, ONNX quant, GPU, workers, JSON presets |
+| **Debug** | Chunk preview, ODE seed, per-chunk WAV export |
+
+### Reference voices (`assets/`)
+
+The voice picker merges **two formats** (click **Refresh** after adding files):
+
+1. **`ref_info.json`** — each entry has `name`, `audio_path`, `text` (transcript required).
+2. **`sample_audio/`** — one audio file + a same-stem `.txt` transcript (e.g. `Bá-Vinh.mp3` + `Bá-Vinh.txt`).
+
+Supported audio: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, … Bundled: **9** voices from `ref_info.json` + **30** from `sample_audio/`. Details in [`assets/README.txt`](assets/README.txt).
+
+### Chunk settings
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| **Min chars / chunk** | 70 | Merge tiny segments (avoid weak mel / voice drift) |
+| **Max chars / chunk** | 135 | Upper bound; lower if you hit OOM |
 
 ---
 
-## Giọng mẫu (`assets/`)
+## ⚙️ Performance
 
-App load **hai kiểu** (gộp trong menu «Giọng mẫu», bấm **Làm mới** sau khi thêm file):
+Per chunk: `text_encoder` ×1 → `fm_decoder` × `num_step` (ODE) → `vocoder` ×1 → librosa ISTFT.
 
-1. **`ref_info.json`** — mỗi entry có `name`, `audio_path`, `text` (transcript bắt buộc).
-2. **`sample_audio/`** — mỗi giọng = **một file audio + một file `.txt` cùng tên** (ví dụ `Bá-Vinh.mp3` + `Bá-Vinh.txt`).
-
-Hỗ trợ audio: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, … Chi tiết: [`assets/README.txt`](assets/README.txt).
-
-Bundled: **9** giọng trong `ref_info.json` + **30** giọng trong `sample_audio/`.
-
----
-
-## Luồng TTS (tóm tắt)
-
-```
-Văn bản → chuẩn hóa (`src/text/normalizers`) → chia chunk (`src/text/chunking`)
-  → mỗi chunk: Espeak G2P → ZipVoice ONNX → vocoder
-  → nối WAV + nghỉ (`src/audio/post_process`)
-```
-
-Micro-chunk quá ngắn được gộp **trong một lần synth** (nối bằng `\n`). Mỗi chunk TTS chính thức vẫn là một lần `generate()` riêng; nghỉ giữa chunk bằng `pause_after`, không gộp chunk bằng newline.
-
----
-
-## Cấu hình chunk
-
-| Tham số | Mặc định | Ý nghĩa |
-|---------|----------|---------|
-| **Min ký tự / chunk** | 70 | Gộp phần quá ngắn (tránh mel yếu / lạc giọng) |
-| **Max ký tự / chunk** | 135 | Trần độ dài; giảm nếu OOM |
-
-Có trong Gradio và preset.
-
----
-
-## TODO
-
-Các hạng mục **chưa hoàn thành** — đừng coi là production-ready:
-
-- [ ] **Slint GUI** (`src/slint_gui/`, `run_slint_gui.bat`) — scaffold desktop (UI + `tts_pipeline` chung) nhưng **chưa ổn định**: crash/tự thoát im lặng khi tổng hợp ONNX, binding Slint Python 1.9.x còn lỗi, thiếu preset/export chunk so với Gradio. **Hiện dùng Gradio** (`run_gui.bat`). Ghi chú kỹ thuật: [`src/slint_gui/README.md`](src/slint_gui/README.md).
-
-## Lời cảm ơn
-
-| Thành phần | Nguồn | License |
-|------------|-------|---------|
-| ZipVoice / ONNX stack | [k2-fsa/ZipVoice](https://github.com/k2-fsa/ZipVoice) | Apache-2.0 |
-| Checkpoint VI | [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h) | CC-BY-NC-SA-4.0 |
-| Giọng mẫu `sample_audio/` (30) | [contextboxai/ViZipvoice](https://huggingface.co/contextboxai/ViZipvoice) (`audio/` — mp3 + transcript) | Apache-2.0 |
-| Vocos | [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) · [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) | MIT |
-| VieNeu text hygiene | [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) | theo repo gốc |
-| sea-g2p | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | theo repo gốc |
-| Espeak / piper_phonemize | [espeak-ng](https://github.com/espeak-ng/espeak-ng) · [k2-fsa/icefall](https://github.com/k2-fsa/icefall) | theo repo gốc |
-| ONNX Runtime | [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime) | MIT |
-
-GUI Gradio, pipeline chunk/audio, preset: **Pham Trong Lam** — Non-Commercial (`LICENSE`).
-
-Audio sinh ra từ model `hynt` phải tuân thủ **CC-BY-NC-SA-4.0** và ghi rõ AI-generated.
-
----
-
-## Phát triển
-
-Cấu trúc thư mục, thêm normalizer, import paths: **[docs/for_dev.md](docs/for_dev.md)**
+| Lever | Where | Knob |
+|-------|-------|------|
+| ORT graph opt + threads | `onnx_session_opts.py` | `ZIPVOICE_ONNX_THREADS`, GUI **Hiệu năng** |
+| Prompt cache | `OnnxTTSEngine.prepare_prompt()` | automatic |
+| GPU batching | `OnnxTTSEngine.generate_batch()` | `ZIPVOICE_INFERENCE_BATCH`, GUI **Batch size** |
+| ODE solver | `euler` / `heun` / `midpoint` | `ZIPVOICE_ODE_SOLVER`, GUI **ODE solver** |
+| CPU overlap | pre-tokenize next chunk | `ZIPVOICE_PIPELINE_OVERLAP=1` |
 
 ```bat
 set PYTHONPATH=src
-python -m unittest test_normalize_pipeline -v
+python scripts/profile_inference.py --gpu --quant int4 --batch 4
+python scripts/diagnose_gpu.py
 ```
+
+> **GPU note:** use **workers = 1** on GPU (multiple CUDA processes often crash). INT4 MatMulNBits may fall back to CPU even when GPU is enabled — profile first.
 
 ---
 
-## GPU / workers
+## 🗺️ Roadmap
 
-- GPU: **workers = 1** (mỗi process load CUDA riêng → crash nếu >1)
-- Chẩn đoán: `python scripts/diagnose_gpu.py`
-- Env: `ZIPVOICE_ONNX_GPU=1`, `ZIPVOICE_GPU_MAX_WORKERS=1`
+- [ ] **Slint desktop GUI** (`src/slint_gui/`) — a native desktop front-end sharing the same `tts_pipeline` core. Currently experimental: silent crashes on ONNX synthesis, Slint Python 1.9.x binding issues, and missing preset/chunk-export parity with Gradio. **Use the Gradio GUI for now.** Technical notes: [`src/slint_gui/README.md`](src/slint_gui/README.md).
+
+---
+
+## 🧪 Development
+
+```bat
+set PYTHONPATH=src
+python -m unittest test_normalize_pipeline test_inference_perf -v
+```
+
+Folder layout, adding a normalizer, import paths, and the pause model: **[docs/for_dev.md](docs/for_dev.md)**.
+
+---
+
+## 🙏 Acknowledgments & License
+
+Weights are exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h); the vocoder `models/vocoder/mel_spec_24khz.onnx` is bundled. Full third-party terms: [`models/THIRD_PARTY_LICENSES.md`](models/THIRD_PARTY_LICENSES.md).
+
+| Component | Source | License |
+|-----------|--------|---------|
+| ZipVoice / ONNX | [k2-fsa/ZipVoice](https://github.com/k2-fsa/ZipVoice) | Apache-2.0 |
+| VI checkpoint | [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h) | CC-BY-NC-SA-4.0 |
+| `sample_audio/` reference voices (30) | [contextboxai/ViZipvoice](https://huggingface.co/contextboxai/ViZipvoice) (`audio/` — mp3 + transcript) | Apache-2.0 |
+| Vocos | [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) · [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) | MIT |
+| VieNeu text hygiene | [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) | per upstream |
+| sea-g2p | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | per upstream |
+| Espeak / piper_phonemize | [espeak-ng](https://github.com/espeak-ng/espeak-ng) · [k2-fsa/icefall](https://github.com/k2-fsa/icefall) | per upstream |
+| ONNX Runtime | [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime) | MIT |
+
+The Gradio GUI, chunk/audio pipeline, and presets are by **Pham Trong Lam** — Non-Commercial ([`LICENSE`](LICENSE)). Audio generated from `hynt` models must comply with **CC-BY-NC-SA-4.0** and be labeled AI-generated.
+
+---
+
+## 👤 Author
+
+**Pham Trong Lam** — [github.com/phamtronglam2001](https://github.com/phamtronglam2001)
+End-to-end ML engineering: model quantization, inference optimization, and shipping usable tools around them.

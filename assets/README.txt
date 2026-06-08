@@ -80,7 +80,7 @@ Giấy phép weights: models/THIRD_PARTY_LICENSES.md
 
 Chuẩn hóa text (GUI): pipeline tuần tự — VieNeu, Cấu trúc TTS, sea-g2p.
 
-Nguồn GitHub — xem README.md / README_EN.md:
+Nguồn GitHub — xem README.md / README_VI.md:
 
   VieNeu (port)     https://github.com/pnnbao97/VieNeu-TTS
 

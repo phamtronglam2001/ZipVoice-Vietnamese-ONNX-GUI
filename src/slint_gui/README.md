@@ -1,6 +1,6 @@
 # ZipVoice Vietnamese ONNX — Slint GUI (**WIP / not recommended**)
 
-> **Trạng thái:** Chưa hoàn thành — tạm **không dùng** cho production. App có thể tự thoát im lặng khi tổng hợp ONNX. Dùng **Gradio** (`run_gui.bat`) thay thế. Theo dõi tiến độ trong [README TODO](../README.md#todo).
+> **Trạng thái:** Chưa hoàn thành — tạm **không dùng** cho production. App có thể tự thoát im lặng khi tổng hợp ONNX. Dùng **Gradio** (`run_gui.bat`) thay thế. Theo dõi tiến độ trong [README Roadmap](../README.md#-roadmap).
 
 Scaffold desktop GUI — dùng chung `src/tts_pipeline.py` với Gradio. Code giữ lại để phát triển sau.
 
