@@ -6,6 +6,8 @@ setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
+set "PYTHONPATH=%~dp0src"
+
 
 
 set ZIPVOICE_FORCE_CPU=1

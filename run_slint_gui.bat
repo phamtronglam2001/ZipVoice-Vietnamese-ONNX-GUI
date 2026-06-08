@@ -6,6 +6,8 @@ setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
+set "PYTHONPATH=%~dp0src"
+
 set INSTALL_MODE=cpu
 if exist ".install_mode" set /p INSTALL_MODE=<.install_mode
 
@@ -58,6 +60,6 @@ if /i "!INSTALL_MODE!"=="gpu" (
     echo Dang khoi dong Slint GUI ZipVoice ONNX ^(CPU-only^)...
 )
 
-".venv\Scripts\python.exe" slint_gui\main.py
+".venv\Scripts\python.exe" "%~dp0src\slint_gui\main.py"
 
 if errorlevel 1 pause

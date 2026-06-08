@@ -12,7 +12,7 @@ Weights exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hy
 
 - Zero-shot voice: bundled voices in `assets/` or upload WAV + transcript
 - **int4** / **int8** quant (CPU or CUDA/DirectML via ONNX Runtime)
-- Configurable text normalization pipeline (extensible registry in `text/normalizers/`)
+- Configurable text normalization pipeline (extensible registry in `src/text/normalizers/`)
 - Chunk **min / max characters**; short micro-segments merged with `\n` before one synthesis call
 - Audiobook pauses: sentence / paragraph / chapter / enum / comma split
 - JSON presets (`profiles/`), CLI (`cli_tts.py`)
@@ -37,16 +37,16 @@ Requires **Git LFS** for ONNX weights. Espeak via `piper_phonemize` wheel (insta
 |---------|---------|
 | **Production GUI (Slint)** | `run_slint_gui.bat` |
 | **Debug GUI (Gradio)** | `run_gui.bat` / `run_gpu.bat` / `run_cpu.bat` |
-| **CLI** | `python cli_tts.py synthesize --help` |
+| **CLI** | `run_cli.bat` or `python src\cli_tts.py synthesize --help` |
 
 ---
 
 ## TTS flow (summary)
 
 ```
-Text → normalize (text/normalizers) → split chunks (text/chunking)
+Text → normalize (`src/text/normalizers`) → split chunks (`src/text/chunking`)
   → per chunk: Espeak G2P → ZipVoice ONNX → vocoder
-  → join WAV + pauses (audio/post_process)
+  → join WAV + pauses (`src/audio/post_process`)
 ```
 
 Over-short **micro-chunks** are merged into **one** synthesis (joined with `\n`). Each full TTS chunk still gets its own `generate()`; gaps between chunks use `pause_after`, not newline merge.

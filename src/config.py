@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 
 ASSETS_DIR = ROOT / "assets"
 OUTPUT_DIR = ROOT / "output"

@@ -12,7 +12,7 @@ Model weights export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.c
 
 - Giọng zero-shot: chọn giọng trong `assets/` hoặc upload WAV + transcript
 - Quant **int4** / **int8** (CPU hoặc CUDA/DirectML qua ONNX Runtime)
-- Pipeline chuẩn hóa text tùy chỉnh (VieNeu, sea-g2p, cấu trúc TTS, …) — registry mở rộng trong `text/normalizers/`
+- Pipeline chuẩn hóa text tùy chỉnh (VieNeu, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
 - Chia chunk **min / max ký tự**; gộp micro-chunk ngắn bằng `\n` trước khi synth
 - Nghỉ audiobook: câu / đoạn / chương / enum / cắt phẩy
 - Preset JSON (`profiles/`), CLI (`cli_tts.py`)
@@ -37,7 +37,7 @@ Cần **Git LFS** để pull weights ONNX. Espeak qua wheel `piper_phonemize` (s
 |----------|------|
 | **GUI production (Slint)** | `run_slint_gui.bat` |
 | **GUI debug (Gradio)** | `run_gui.bat` / `run_gpu.bat` / `run_cpu.bat` |
-| **CLI** | `python cli_tts.py synthesize --help` |
+| **CLI** | `run_cli.bat` hoặc `python src\cli_tts.py synthesize --help` |
 
 Slint: giọng, preset, synth sách dài. Gradio: debug chunk, seed, xem pipeline chuẩn hóa.
 
@@ -46,9 +46,9 @@ Slint: giọng, preset, synth sách dài. Gradio: debug chunk, seed, xem pipelin
 ## Luồng TTS (tóm tắt)
 
 ```
-Văn bản → chuẩn hóa (text/normalizers) → chia chunk (text/chunking)
+Văn bản → chuẩn hóa (`src/text/normalizers`) → chia chunk (`src/text/chunking`)
   → mỗi chunk: Espeak G2P → ZipVoice ONNX → vocoder
-  → nối WAV + nghỉ (audio/post_process)
+  → nối WAV + nghỉ (`src/audio/post_process`)
 ```
 
 Micro-chunk quá ngắn được gộp **trong một lần synth** (nối bằng `\n`). Mỗi chunk TTS chính thức vẫn là một lần `generate()` riêng; nghỉ giữa chunk bằng `pause_after`, không gộp chunk bằng newline.

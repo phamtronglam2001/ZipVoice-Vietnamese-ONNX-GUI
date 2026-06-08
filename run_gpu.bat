@@ -6,6 +6,8 @@ setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
+set "PYTHONPATH=%~dp0src"
+
 set INSTALL_MODE=cpu
 if exist ".install_mode" set /p INSTALL_MODE=<.install_mode
 
@@ -31,6 +33,6 @@ echo.
 
 echo Dang khoi dong GUI ZipVoice ONNX (GPU) tai http://127.0.0.1:7862
 
-".venv\Scripts\python.exe" app.py
+".venv\Scripts\python.exe" "%~dp0src\app.py"
 
 if errorlevel 1 pause

@@ -2,18 +2,19 @@
 ZipVoice Vietnamese ONNX TTS — Slint GUI entry point.
 
 Run from project root:
-    python slint_gui/main.py
-Or:
     run_slint_gui.bat
+Or with PYTHONPATH:
+    set PYTHONPATH=src
+    python src/slint_gui/main.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_SRC = Path(__file__).resolve().parent.parent
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 from config import (  # noqa: E402
     ASSETS_DIR,
