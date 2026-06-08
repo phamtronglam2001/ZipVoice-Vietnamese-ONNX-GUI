@@ -29,7 +29,10 @@ from text.normalizers import (
 )
 
 PRESETS_DIR = ROOT / "profiles"
+PIPELINE_PRESETS_DIR = PRESETS_DIR / "pipelines"
 SCHEMA_VERSION = 1
+PIPELINE_PRESET_SCHEMA = 1
+_SKIP_PROFILE_FILES = frozenset({"slint_ui.json"})
 
 VALID_PIPELINE_STEPS = frozenset(
     {
@@ -301,7 +304,14 @@ def save_preset(path: str | Path, preset: PresetConfig) -> Path:
 
 def list_presets() -> list[Path]:
     PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-    return sorted(PRESETS_DIR.glob("*.json"), key=lambda x: x.stem.lower())
+    return sorted(
+        (
+            p
+            for p in PRESETS_DIR.glob("*.json")
+            if p.name not in _SKIP_PROFILE_FILES
+        ),
+        key=lambda x: x.stem.lower(),
+    )
 
 
 def preset_dropdown_choices() -> list[tuple[str, str]]:
@@ -522,10 +532,142 @@ def apply_preset_to_gui(preset: PresetConfig) -> dict[str, Any]:
         "ode_solver": gr.update(value=str(preset.ode_solver)),
         "pipeline_overlap": gr.update(value=bool(preset.pipeline_overlap)),
         "preset_status": (
-            f"Đã tải preset **{preset.name}**"
+            f"Đã tải **Profile TTS** `{preset.name}`"
             + (f" — {preset.description}" if preset.description else "")
         ),
     }
+
+
+@dataclass
+class PipelinePreset:
+    """Chỉ danh sách bước chuẩn hóa — không chứa giọng/chunk/synth."""
+
+    schema_version: int = PIPELINE_PRESET_SCHEMA
+    name: str = ""
+    description: str = ""
+    pipeline: list[str] = field(default_factory=lambda: list(DEFAULT_NORMALIZE_PIPELINE))
+
+
+def _resolve_pipeline_preset_path(path_or_name: str | Path) -> Path:
+    p = Path(path_or_name)
+    if p.is_file():
+        return p.resolve()
+    stem = Path(path_or_name).stem if str(path_or_name).endswith(".json") else str(path_or_name)
+    candidate = PIPELINE_PRESETS_DIR / f"{stem}.json"
+    if candidate.is_file():
+        return candidate.resolve()
+    raise FileNotFoundError(f"Pipeline preset not found: {path_or_name}")
+
+
+def pipeline_preset_to_dict(preset: PipelinePreset) -> dict[str, Any]:
+    return {
+        "schema_version": preset.schema_version,
+        "kind": "normalize_pipeline",
+        "name": preset.name,
+        "description": preset.description,
+        "pipeline": list(preset.pipeline),
+    }
+
+
+def _pipeline_preset_from_dict(data: dict[str, Any]) -> PipelinePreset:
+    if not isinstance(data, dict):
+        raise ValueError("Root must be a JSON object")
+    pipeline_raw = data.get("pipeline", [])
+    if not isinstance(pipeline_raw, list):
+        raise ValueError("pipeline must be a list")
+    pipeline = build_normalize_pipeline(pipeline_raw)
+    return PipelinePreset(
+        schema_version=int(data.get("schema_version", PIPELINE_PRESET_SCHEMA)),
+        name=str(data.get("name") or ""),
+        description=str(data.get("description") or ""),
+        pipeline=pipeline,
+    )
+
+
+def load_pipeline_preset(path_or_name: str | Path) -> PipelinePreset:
+    path = _resolve_pipeline_preset_path(path_or_name)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    preset = _pipeline_preset_from_dict(data)
+    if not preset.name:
+        preset.name = path.stem
+    return preset
+
+
+def save_pipeline_preset(
+    path: str | Path,
+    pipeline: list[str] | None,
+    *,
+    name: str = "",
+    description: str = "",
+) -> Path:
+    PIPELINE_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    validated = build_normalize_pipeline(pipeline)
+    p = Path(path)
+    if p.suffix != ".json":
+        p = PIPELINE_PRESETS_DIR / f"{_slug_name(str(path))}.json"
+    elif not p.is_absolute():
+        p = PIPELINE_PRESETS_DIR / p.name
+    preset = PipelinePreset(
+        name=name.strip() or p.stem,
+        description=description.strip(),
+        pipeline=validated,
+    )
+    p.write_text(
+        json.dumps(pipeline_preset_to_dict(preset), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return p.resolve()
+
+
+def list_pipeline_presets() -> list[Path]:
+    PIPELINE_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted(PIPELINE_PRESETS_DIR.glob("*.json"), key=lambda x: x.stem.lower())
+
+
+def pipeline_preset_dropdown_choices() -> list[tuple[str, str]]:
+    choices: list[tuple[str, str]] = []
+    for p in list_pipeline_presets():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            label = str(data.get("name") or p.stem)
+            desc = str(data.get("description") or "").strip()
+            if desc:
+                label = f"{label} — {desc[:36]}"
+        except Exception:
+            label = p.stem
+        choices.append((label, p.stem))
+    return choices
+
+
+def ensure_default_pipeline_presets() -> None:
+    """Seed bundled pipeline presets if missing."""
+    PIPELINE_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    defaults: list[tuple[str, PipelinePreset]] = [
+        (
+            "audiobook",
+            PipelinePreset(
+                name="Audiobook",
+                description="Toàn bộ chuẩn hóa (sea-g2p → … → VieNeu)",
+                pipeline=list(AUDIOBOOK_PRESET_PIPELINE),
+            ),
+        ),
+        (
+            "trong",
+            PipelinePreset(
+                name="Trống",
+                description="Không bước chuẩn hóa (chỉ post-process)",
+                pipeline=list(DEFAULT_NORMALIZE_PIPELINE),
+            ),
+        ),
+    ]
+    for stem, preset in defaults:
+        path = PIPELINE_PRESETS_DIR / f"{stem}.json"
+        if path.is_file():
+            continue
+        path.write_text(
+            json.dumps(pipeline_preset_to_dict(preset), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def default_none_preset() -> PresetConfig:

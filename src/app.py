@@ -38,11 +38,15 @@ from config import (
 )
 from export_audio import EXPORT_CHOICES
 from preset_io import (
-    collect_gui_state,
-    load_preset,
-    preset_dropdown_choices,
-    save_preset,
     apply_preset_to_gui,
+    collect_gui_state,
+    ensure_default_pipeline_presets,
+    load_pipeline_preset,
+    load_preset,
+    pipeline_preset_dropdown_choices,
+    preset_dropdown_choices,
+    save_pipeline_preset,
+    save_preset,
 )
 from runtime_log import setup_runtime_logging
 from status_log import StatusLog
@@ -243,15 +247,44 @@ def _on_pipeline_audiobook_preset():
     return _refresh_pipeline_ui(steps)
 
 
-def _on_load_preset(preset_name: str | None):
+def _on_load_pipeline_preset(preset_name: str | None):
     if not preset_name:
-        raise gr.Error("Chọn preset trong danh sách profiles/.")
+        raise gr.Error("Chọn preset pipeline trong danh sách profiles/pipelines/.")
     try:
-        preset = load_preset(preset_name)
+        preset = load_pipeline_preset(preset_name)
+    except (FileNotFoundError, ValueError) as exc:
+        raise gr.Error(str(exc)) from exc
+    refreshed = _refresh_pipeline_ui(preset.pipeline)
+    status = (
+        f"Đã tải **Preset pipeline** `{preset.name}`"
+        + (f" — {preset.description}" if preset.description else "")
+    )
+    return (*refreshed, status)
+
+
+def _on_save_pipeline_preset(save_name: str, norm_pipeline: list[str] | None):
+    if not save_name or not save_name.strip():
+        raise gr.Error("Nhập tên lưu preset pipeline (vd: sach_g2p).")
+    try:
+        path = save_pipeline_preset(save_name.strip(), norm_pipeline)
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    choices = pipeline_preset_dropdown_choices()
+    return (
+        gr.update(choices=choices, value=path.stem),
+        f"Đã lưu **Preset pipeline** → `{path}`",
+    )
+
+
+def _on_load_profile(profile_name: str | None):
+    if not profile_name:
+        raise gr.Error("Chọn Profile TTS trong danh sách profiles/.")
+    try:
+        preset = load_preset(profile_name)
     except (FileNotFoundError, ValueError) as exc:
         raise gr.Error(str(exc)) from exc
     updates = apply_preset_to_gui(preset)
-    preset_status_msg = updates.pop("preset_status", f"Đã tải preset **{preset.name}**")
+    preset_status_msg = updates.pop("preset_status", f"Đã tải **Profile TTS** `{preset.name}`")
     asset_info = preset_status_msg
     if preset.voice_mode == "bundled" and preset.voice_id:
         voice = get_voice_by_id(preset.voice_id, _voice_cache)
@@ -295,7 +328,7 @@ def _on_load_preset(preset_name: str | None):
     )
 
 
-def _on_save_preset(
+def _on_save_profile(
     save_name: str,
     voice_dropdown: str,
     ref_audio_path: str | None,
@@ -323,7 +356,7 @@ def _on_save_preset(
     pipeline_overlap: bool = True,
 ):
     if not save_name or not save_name.strip():
-        raise gr.Error("Nhập tên file preset (vd: sach_ai_vy).")
+        raise gr.Error("Nhập tên lưu Profile TTS (vd: sach_ai_vy).")
     preset = collect_gui_state(
         voice_dropdown=voice_dropdown,
         ref_audio_path=ref_audio_path,
@@ -358,7 +391,7 @@ def _on_save_preset(
     choices = preset_dropdown_choices()
     return (
         gr.update(choices=choices, value=path.stem),
-        f"Đã lưu preset → `{path}`",
+        f"Đã lưu **Profile TTS** → `{path}`",
     )
 
 
@@ -741,6 +774,7 @@ def export_chunk_wavs_debug(
 
 def build_ui() -> gr.Blocks:
     global _voice_cache
+    ensure_default_pipeline_presets()
     _voice_cache = scan_ref_voices()
     initial_choices = dropdown_choices(_voice_cache)
 
@@ -851,59 +885,16 @@ def build_ui() -> gr.Blocks:
                             placeholder="Bấm Tổng hợp để xem log…",
                         )
 
-            with gr.Tab("Chuẩn hoá text", elem_id="zv-tab-norm"):
-                with gr.Row(elem_id="zv-norm-toolbar"):
-                    input_mode = gr.Radio(
-                        label="Chế độ đầu vào",
-                        choices=[(label, key) for key, label in INPUT_MODE_CHOICES.items()],
-                        value="raw",
-                        scale=3,
-                        elem_id="zv-input-mode",
-                    )
-                    preview_norm_btn = gr.Button(
-                        "Xem trước",
-                        size="sm",
-                        variant="secondary",
-                        scale=1,
-                        min_width=88,
-                        elem_id="zv-preview-norm-btn",
-                    )
-                    export_norm_btn = gr.Button(
-                        "Xuất .txt",
-                        size="sm",
-                        variant="secondary",
-                        scale=1,
-                        min_width=72,
-                        elem_id="zv-export-norm-btn",
-                    )
-                with gr.Row(equal_height=False, elem_id="zv-norm-preview-row"):
-                    with gr.Column(scale=1):
-                        norm_preview = gr.Textbox(
-                            label="Text đã chuẩn hóa",
-                            lines=4,
-                            max_lines=20,
-                            interactive=False,
-                            elem_id="zv-norm-preview",
-                            elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
-                            placeholder="Xem trước hoặc sau TTS…",
-                        )
-                    with gr.Column(scale=1):
-                        export_norm_path = gr.Textbox(
-                            label="Đường dẫn xuất",
-                            placeholder="output/<tên>_normalized.txt",
-                            lines=1,
-                            elem_id="zv-export-norm-path",
-                            elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
-                        )
-                        export_norm_status = gr.Markdown(
-                            "",
-                            elem_id="zv-export-norm-status",
+            with gr.Tab("Chuẩn hóa & chunk", elem_id="zv-tab-chunk"):
+                with gr.Column(elem_id="zv-pipeline-col"):
+                        gr.Markdown(
+                            "**Preset pipeline** — chỉ lưu/tải *danh sách bước chuẩn hóa* "
+                            "(`profiles/pipelines/`). "
+                            "**Profile TTS** — lưu/tải *toàn bộ tham số* (giọng, chunk, nghỉ, synth, GPU…) "
+                            "ở tab **Hiệu năng**.",
+                            elem_id="zv-pipeline-hint",
                             elem_classes=["zv-compact-md"],
                         )
-
-            with gr.Tab("Chuẩn hóa & chunk", elem_id="zv-tab-chunk"):
-                with gr.Row(equal_height=False, elem_id="zv-chunk-main-row"):
-                    with gr.Column(scale=1, elem_id="zv-pipeline-col"):
                         with gr.Row(elem_id="zv-norm-add-row"):
                             norm_add_step = gr.Dropdown(
                                 label="Loại chuẩn hóa",
@@ -927,50 +918,136 @@ def build_ui() -> gr.Blocks:
                             norm_remove_btn = gr.Button("Xóa", size="sm", min_width=56, elem_id="zv-norm-remove-btn")
                             norm_reset_btn = gr.Button("Trống", size="sm", min_width=56, elem_id="zv-norm-reset-btn")
                             norm_audiobook_btn = gr.Button(
-                                "Sách", size="sm", min_width=64, elem_id="zv-norm-audiobook-btn",
+                                "Mẫu Sách", size="sm", min_width=80, elem_id="zv-norm-audiobook-btn",
                             )
                         norm_pipeline_display = gr.Markdown(
                             value=format_normalize_pipeline_list([]),
                             elem_id="zv-norm-pipeline-display",
                             elem_classes=["zv-compact-md"],
                         )
-                    with gr.Column(scale=1, elem_id="zv-chunk-col"):
-                        with gr.Row(elem_id="zv-chunk-slider-row"):
-                            chunk_min_chars = gr.Slider(
-                                12, 150, value=70, step=5,
-                                label="Min ký tự / chunk",
-                                elem_id="zv-chunk-min-chars",
+                        _pipeline_preset_choices = pipeline_preset_dropdown_choices()
+                        with gr.Row(elem_id="zv-pipeline-preset-load-row"):
+                            pipeline_preset_dropdown = gr.Dropdown(
+                                label="Preset pipeline (profiles/pipelines/)",
+                                choices=_pipeline_preset_choices,
+                                value=_pipeline_preset_choices[0][1] if _pipeline_preset_choices else None,
+                                scale=4,
+                                elem_id="zv-pipeline-preset-dropdown",
                             )
-                            chunk_max_chars = gr.Slider(
-                                80, 220, value=135, step=5,
-                                label="Max ký tự / chunk",
-                                elem_id="zv-chunk-max-chars",
+                            pipeline_preset_load_btn = gr.Button(
+                                "Tải", size="sm", scale=1, min_width=56,
+                                elem_id="zv-pipeline-preset-load-btn",
                             )
-                        with gr.Accordion("Nghỉ audiobook", open=False, elem_id="zv-pause-accordion"):
-                            with gr.Row(elem_id="zv-pause-row-1"):
-                                pause_sentence = gr.Slider(
-                                    0.1, 1.5, value=PAUSE_SENTENCE_DEFAULT, step=0.05,
-                                    label="Câu (s)", elem_id="zv-pause-sentence",
-                                )
-                                pause_paragraph = gr.Slider(
-                                    0.2, 2.0, value=PAUSE_PARAGRAPH_DEFAULT, step=0.05,
-                                    label="Đoạn (s)", elem_id="zv-pause-paragraph",
-                                )
-                            with gr.Row(elem_id="zv-pause-row-2"):
-                                pause_chapter = gr.Slider(
-                                    0.5, 4.0, value=PAUSE_CHAPTER_DEFAULT, step=0.1,
-                                    label="Chương (s)", elem_id="zv-pause-chapter",
-                                )
-                                pause_enum_item = gr.Slider(
-                                    0.2, 2.5, value=PAUSE_ENUM_DEFAULT, step=0.05,
-                                    label="Liệt kê (s)", elem_id="zv-pause-enum",
-                                )
-                                pause_forced = gr.Slider(
-                                    0.05, 0.8, value=PAUSE_FORCED_SPLIT_DEFAULT, step=0.01,
-                                    label="Cắt phẩy (s)", elem_id="zv-pause-forced",
-                                )
+                        with gr.Row(elem_id="zv-pipeline-preset-save-row"):
+                            pipeline_preset_save_name = gr.Textbox(
+                                label="Tên lưu preset pipeline",
+                                placeholder="vd: sach_g2p",
+                                scale=4,
+                                lines=1,
+                                elem_id="zv-pipeline-preset-save-name",
+                                elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                            )
+                            pipeline_preset_save_btn = gr.Button(
+                                "Lưu", size="sm", scale=1, min_width=56,
+                                elem_id="zv-pipeline-preset-save-btn",
+                            )
+                        pipeline_preset_status = gr.Markdown(
+                            "",
+                            elem_id="zv-pipeline-preset-status",
+                            elem_classes=["zv-compact-md"],
+                        )
+                with gr.Row(equal_height=False, elem_id="zv-norm-preview-row"):
+                    with gr.Column(scale=1, elem_id="zv-norm-preview-col"):
+                        input_mode = gr.Radio(
+                            label="Chế độ đầu vào",
+                            choices=[(label, key) for key, label in INPUT_MODE_CHOICES.items()],
+                            value="raw",
+                            elem_id="zv-input-mode",
+                        )
+                        norm_preview = gr.Textbox(
+                            label="Text đã chuẩn hóa",
+                            lines=4,
+                            max_lines=20,
+                            interactive=False,
+                            elem_id="zv-norm-preview",
+                            elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                            placeholder="Xem trước hoặc sau TTS…",
+                        )
+                    with gr.Column(scale=1, elem_id="zv-norm-export-col"):
+                        with gr.Row(elem_id="zv-norm-toolbar"):
+                            preview_norm_btn = gr.Button(
+                                "Xem trước",
+                                size="sm",
+                                variant="secondary",
+                                min_width=88,
+                                elem_id="zv-preview-norm-btn",
+                            )
+                            export_norm_btn = gr.Button(
+                                "Xuất .txt",
+                                size="sm",
+                                variant="secondary",
+                                min_width=72,
+                                elem_id="zv-export-norm-btn",
+                            )
+                        export_norm_path = gr.Textbox(
+                            label="Đường dẫn xuất",
+                            placeholder="output/<tên>_normalized.txt",
+                            lines=1,
+                            elem_id="zv-export-norm-path",
+                            elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                        )
+                        export_norm_status = gr.Markdown(
+                            "",
+                            elem_id="zv-export-norm-status",
+                            elem_classes=["zv-compact-md"],
+                        )
+                with gr.Group(elem_id="zv-chunk-grid"):
+                    gr.Markdown(
+                        "**Chunk & nghỉ audiobook** — chia đoạn văn bản *sau* chuẩn hóa "
+                        "(không phải bước normalizer).",
+                        elem_id="zv-chunk-grid-title",
+                        elem_classes=["zv-compact-md"],
+                    )
+                    with gr.Row(elem_id="zv-chunk-slider-row"):
+                        chunk_min_chars = gr.Slider(
+                            12, 150, value=70, step=5,
+                            label="Min ký tự / chunk",
+                            elem_id="zv-chunk-min-chars",
+                        )
+                        chunk_max_chars = gr.Slider(
+                            80, 220, value=135, step=5,
+                            label="Max ký tự / chunk",
+                            elem_id="zv-chunk-max-chars",
+                        )
+                    gr.Markdown(
+                        "**Nghỉ audiobook** (giây im lặng giữa các đoạn)",
+                        elem_id="zv-pause-grid-title",
+                        elem_classes=["zv-compact-md"],
+                    )
+                    with gr.Row(elem_id="zv-pause-row-1"):
+                        pause_sentence = gr.Slider(
+                            0.1, 1.5, value=PAUSE_SENTENCE_DEFAULT, step=0.05,
+                            label="Câu (s)", elem_id="zv-pause-sentence",
+                        )
+                        pause_paragraph = gr.Slider(
+                            0.2, 2.0, value=PAUSE_PARAGRAPH_DEFAULT, step=0.05,
+                            label="Đoạn (s)", elem_id="zv-pause-paragraph",
+                        )
+                        pause_chapter = gr.Slider(
+                            0.5, 4.0, value=PAUSE_CHAPTER_DEFAULT, step=0.1,
+                            label="Chương (s)", elem_id="zv-pause-chapter",
+                        )
+                    with gr.Row(elem_id="zv-pause-row-2"):
+                        pause_enum_item = gr.Slider(
+                            0.2, 2.5, value=PAUSE_ENUM_DEFAULT, step=0.05,
+                            label="Liệt kê (s)", elem_id="zv-pause-enum",
+                        )
+                        pause_forced = gr.Slider(
+                            0.05, 0.8, value=PAUSE_FORCED_SPLIT_DEFAULT, step=0.01,
+                            label="Cắt phẩy (s)", elem_id="zv-pause-forced",
+                        )
 
-            with gr.Tab("Hiệu năng & preset", elem_id="zv-tab-perf"):
+            with gr.Tab("Hiệu năng & Profile", elem_id="zv-tab-perf"):
                 with gr.Row(elem_id="zv-perf-row-1"):
                     speed = gr.Slider(
                         0.3, 2.0, value=1.0, step=0.1, label="Tốc độ", elem_id="zv-speed",
@@ -1040,31 +1117,41 @@ def build_ui() -> gr.Blocks:
                         label="ODE steps",
                         elem_id="zv-synth-num-step",
                     )
-                with gr.Accordion("Preset JSON (profiles/)", open=False, elem_id="zv-preset-accordion"):
-                    _preset_choices = preset_dropdown_choices()
-                    with gr.Row(elem_id="zv-preset-toolbar"):
-                        preset_dropdown = gr.Dropdown(
-                            label="Preset",
-                            choices=_preset_choices,
-                            value=_preset_choices[0][1] if _preset_choices else None,
-                            scale=3,
-                            elem_id="zv-preset-dropdown",
-                        )
-                        preset_load_btn = gr.Button("Tải", size="sm", scale=1, elem_id="zv-preset-load-btn")
-                        preset_save_btn = gr.Button("Lưu", size="sm", scale=1, elem_id="zv-preset-save-btn")
-                    with gr.Row(elem_id="zv-preset-save-row"):
-                        preset_save_name = gr.Textbox(
-                            label="Tên lưu",
-                            placeholder="vd: sach_ai_vy",
-                            scale=3,
-                            lines=1,
-                            elem_id="zv-preset-save-name",
-                            elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
-                        )
-                    preset_status = gr.Markdown(
-                        "", elem_id="zv-preset-status", elem_classes=["zv-compact-md"],
+                gr.Markdown(
+                    "**Profile TTS** — lưu/tải toàn bộ cấu hình (giọng, pipeline, chunk, nghỉ, synth, GPU…). "
+                    "Khác **Preset pipeline** (chỉ bước chuẩn hóa) ở tab Chuẩn hóa & chunk.",
+                    elem_id="zv-profile-hint",
+                    elem_classes=["zv-compact-md"],
+                )
+                _profile_choices = preset_dropdown_choices()
+                with gr.Row(elem_id="zv-profile-load-row"):
+                    profile_dropdown = gr.Dropdown(
+                        label="Profile TTS (profiles/)",
+                        choices=_profile_choices,
+                        value=_profile_choices[0][1] if _profile_choices else None,
+                        scale=4,
+                        elem_id="zv-profile-dropdown",
                     )
-
+                    profile_load_btn = gr.Button(
+                        "Tải", size="sm", scale=1, min_width=56, elem_id="zv-profile-load-btn",
+                    )
+                with gr.Row(elem_id="zv-profile-save-row"):
+                    profile_save_name = gr.Textbox(
+                        label="Tên lưu Profile TTS",
+                        placeholder="vd: sach_ai_vy",
+                        scale=4,
+                        lines=1,
+                        elem_id="zv-profile-save-name",
+                        elem_classes=[TEXTBOX_UNICODE_SM_CLASS],
+                    )
+                    profile_save_btn = gr.Button(
+                        "Lưu", size="sm", scale=1, min_width=56, elem_id="zv-profile-save-btn",
+                    )
+                profile_status = gr.Markdown(
+                    "",
+                    elem_id="zv-profile-status",
+                    elem_classes=["zv-compact-md"],
+                )
             with gr.Tab("Debug", elem_id="zv-tab-debug"):
                 with gr.Accordion(
                     "Chunk, seed, export WAV", open=False, elem_id="zv-debug-accordion",
@@ -1163,9 +1250,23 @@ def build_ui() -> gr.Blocks:
         )
         norm_reset_btn.click(_on_pipeline_reset, outputs=_pipeline_outputs)
         norm_audiobook_btn.click(_on_pipeline_audiobook_preset, outputs=_pipeline_outputs)
-        preset_load_btn.click(
-            _on_load_preset,
-            inputs=[preset_dropdown],
+        _pipeline_preset_outputs = [
+            *_pipeline_outputs,
+            pipeline_preset_status,
+        ]
+        pipeline_preset_load_btn.click(
+            _on_load_pipeline_preset,
+            inputs=[pipeline_preset_dropdown],
+            outputs=_pipeline_preset_outputs,
+        )
+        pipeline_preset_save_btn.click(
+            _on_save_pipeline_preset,
+            inputs=[pipeline_preset_save_name, norm_pipeline_state],
+            outputs=[pipeline_preset_dropdown, pipeline_preset_status],
+        )
+        profile_load_btn.click(
+            _on_load_profile,
+            inputs=[profile_dropdown],
             outputs=[
                 voice_dropdown,
                 ref_audio,
@@ -1194,13 +1295,13 @@ def build_ui() -> gr.Blocks:
                 inference_batch_size,
                 ode_solver,
                 pipeline_overlap,
-                preset_status,
+                profile_status,
             ],
         )
-        preset_save_btn.click(
-            _on_save_preset,
+        profile_save_btn.click(
+            _on_save_profile,
             inputs=[
-                preset_save_name,
+                profile_save_name,
                 voice_dropdown,
                 ref_audio,
                 ref_text,
@@ -1226,7 +1327,7 @@ def build_ui() -> gr.Blocks:
                 ode_solver,
                 pipeline_overlap,
             ],
-            outputs=[preset_dropdown, preset_status],
+            outputs=[profile_dropdown, profile_status],
         )
         preview_norm_btn.click(
             preview_normalize,

@@ -180,26 +180,37 @@
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   TAB 2 — Chuẩn hoá text
+   TAB 2 — Chuẩn hóa & chunk
    ───────────────────────────────────────────────────────────────────────────── */
 
-#zv-norm-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
-#zv-input-mode { flex: 1 1 auto !important; min-width: 12rem !important; }
-#zv-preview-norm-btn { flex: 0 0 auto !important; width: 6.5rem !important; }
-#zv-export-norm-btn { flex: 0 0 auto !important; width: 5.5rem !important; }
+#zv-norm-preview-row { width: 100% !important; gap: var(--zv-gap) !important; margin-top: 0.2rem !important; }
+#zv-norm-preview-col, #zv-norm-export-col { flex: 1 1 0 !important; min-width: 0 !important; }
+#zv-input-mode { width: 100% !important; margin-bottom: 0.15rem !important; }
 
-#zv-norm-preview-row { width: 100% !important; gap: var(--zv-gap) !important; }
-#zv-norm-preview-row > div { flex: 1 1 0 !important; min-width: 0 !important; }
+#zv-norm-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; margin-bottom: 0.15rem !important; }
+#zv-preview-norm-btn, #zv-export-norm-btn { flex: 0 0 auto !important; }
+#zv-preview-norm-btn { width: 6.5rem !important; }
+#zv-export-norm-btn { width: 5.5rem !important; }
 #zv-norm-preview textarea { min-height: 6em !important; max-height: var(--zv-text-max) !important; }
 #zv-export-norm-status { width: 100% !important; }
 
+#zv-pipeline-col { width: 100% !important; }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   TAB 3 — Chuẩn hóa & chunk (2 cột)
-   ───────────────────────────────────────────────────────────────────────────── */
+#zv-pipeline-hint { width: 100% !important; margin-bottom: 2px !important; }
 
-#zv-chunk-main-row { width: 100% !important; gap: var(--zv-gap) !important; }
-#zv-pipeline-col, #zv-chunk-col { flex: 1 1 0 !important; min-width: 0 !important; }
+/* Chunk grid — tách khỏi pipeline normalizer */
+#zv-chunk-grid {
+    width: 100% !important;
+    margin-top: 0.55rem !important;
+    padding: 0.45rem 0.55rem 0.35rem !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: var(--zv-radius) !important;
+    background: color-mix(in srgb, var(--block-background-fill) 92%, var(--border-color-primary)) !important;
+}
+#zv-chunk-grid-title { margin-bottom: 0.15rem !important; }
+#zv-chunk-grid-title p { font-weight: 600 !important; }
+#zv-pause-grid-title { margin: 0.25rem 0 0.1rem !important; }
+#zv-pause-grid-title p { font-size: 0.82em !important; opacity: 0.9; }
 
 #zv-norm-add-row { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
 #zv-norm-add-step { flex: 1 1 auto !important; min-width: 9rem !important; }
@@ -211,26 +222,48 @@
 #zv-norm-move-row { width: 100% !important; gap: 4px !important; flex-wrap: wrap !important; }
 #zv-norm-up-btn, #zv-norm-down-btn { flex: 0 0 auto !important; width: 2.6rem !important; }
 #zv-norm-remove-btn, #zv-norm-reset-btn { flex: 0 0 auto !important; width: 3.6rem !important; }
-#zv-norm-audiobook-btn { flex: 0 0 auto !important; width: 4.2rem !important; }
+#zv-norm-audiobook-btn { flex: 0 0 auto !important; width: 6.2rem !important; }
 
 #zv-norm-pipeline-display { width: 100% !important; max-height: 14vh !important; overflow-y: auto !important; }
 
+#zv-pipeline-preset-load-row,
+#zv-pipeline-preset-save-row {
+    width: 100% !important;
+    align-items: flex-end !important;
+    gap: var(--zv-gap) !important;
+    flex-wrap: wrap !important;
+}
+#zv-pipeline-preset-dropdown,
+#zv-pipeline-preset-save-name { flex: 1 1 auto !important; min-width: 10rem !important; }
+#zv-pipeline-preset-load-btn,
+#zv-pipeline-preset-save-btn { flex: 0 0 auto !important; width: 3.6rem !important; }
+#zv-pipeline-preset-status { width: 100% !important; }
+
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   TAB 4 — Hiệu năng & preset
+   TAB 3 — Hiệu năng & Profile TTS
    ───────────────────────────────────────────────────────────────────────────── */
 
 #zv-runtime-device { width: 100% !important; }
 
-#zv-preset-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }
-#zv-preset-dropdown { flex: 1 1 auto !important; min-width: 8rem !important; }
-#zv-preset-load-btn, #zv-preset-save-btn { flex: 0 0 auto !important; width: 4rem !important; }
-#zv-preset-save-name { width: 100% !important; }
-#zv-preset-status { width: 100% !important; }
+#zv-profile-hint { width: 100% !important; margin-top: 0.35rem !important; }
+#zv-profile-load-row,
+#zv-profile-save-row {
+    width: 100% !important;
+    align-items: flex-end !important;
+    gap: var(--zv-gap) !important;
+    flex-wrap: wrap !important;
+}
+#zv-profile-dropdown,
+#zv-profile-save-name { flex: 1 1 auto !important; min-width: 10rem !important; }
+#zv-profile-load-btn,
+#zv-profile-save-btn { flex: 0 0 auto !important; width: 3.6rem !important; }
+#zv-profile-status { width: 100% !important; }
+
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   TAB 5 — Debug
+   TAB 4 — Debug
    ───────────────────────────────────────────────────────────────────────────── */
 
 #zv-debug-toolbar { width: 100% !important; align-items: flex-end !important; gap: var(--zv-gap) !important; }

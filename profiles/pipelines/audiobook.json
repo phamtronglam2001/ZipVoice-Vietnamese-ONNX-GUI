@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "normalize_pipeline",
+  "name": "Audiobook",
+  "description": "Toàn bộ chuẩn hóa (sea-g2p → … → VieNeu)",
+  "pipeline": [
+    "sea_g2p",
+    "dot_newline",
+    "period_break",
+    "newline_sentence",
+    "join_soft_breaks",
+    "vieneu"
+  ]
+}

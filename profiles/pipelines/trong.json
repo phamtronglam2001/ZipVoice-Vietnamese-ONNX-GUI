@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "kind": "normalize_pipeline",
+  "name": "Trống",
+  "description": "Không bước chuẩn hóa (chỉ post-process)",
+  "pipeline": []
+}
