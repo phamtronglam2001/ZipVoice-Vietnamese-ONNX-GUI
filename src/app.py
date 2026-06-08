@@ -98,6 +98,7 @@ from text.pipeline import (  # noqa: E402
     INPUT_MODE_CHOICES,
     export_normalized_text_file,
     parse_input_mode,
+    preview_chunks_output,
     preview_normalize_output,
 )
 
@@ -352,6 +353,11 @@ def preview_normalize(
     norm_pipeline: list[str] | None,
     chunk_min_chars: int,
     chunk_max_chars: int,
+    pause_sentence: float,
+    pause_paragraph: float,
+    pause_chapter: float,
+    pause_enum_item: float,
+    pause_forced: float,
     input_mode: str,
 ) -> str:
     try:
@@ -362,6 +368,44 @@ def preview_normalize(
             chunk_max_chars=int(chunk_max_chars),
             chunk_min_chars=int(chunk_min_chars),
             mode=parse_input_mode(input_mode),
+            pause_sentence=float(pause_sentence),
+            pause_paragraph=float(pause_paragraph),
+            pause_chapter=float(pause_chapter),
+            pause_enum_item=float(pause_enum_item),
+            pause_forced_split=float(pause_forced),
+        )
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    except ImportError as exc:
+        raise gr.Error(str(exc)) from exc
+
+
+def preview_chunks(
+    gen_text: str,
+    gen_txt_source_path: str | None,
+    norm_pipeline: list[str] | None,
+    chunk_min_chars: int,
+    chunk_max_chars: int,
+    pause_sentence: float,
+    pause_paragraph: float,
+    pause_chapter: float,
+    pause_enum_item: float,
+    pause_forced: float,
+    input_mode: str,
+) -> str:
+    try:
+        source_text = _resolve_gen_text_for_pipeline(gen_text, gen_txt_source_path)
+        return preview_chunks_output(
+            source_text,
+            norm_pipeline,
+            chunk_max_chars=int(chunk_max_chars),
+            chunk_min_chars=int(chunk_min_chars),
+            mode=parse_input_mode(input_mode),
+            pause_sentence=float(pause_sentence),
+            pause_paragraph=float(pause_paragraph),
+            pause_chapter=float(pause_chapter),
+            pause_enum_item=float(pause_enum_item),
+            pause_forced_split=float(pause_forced),
         )
     except ValueError as exc:
         raise gr.Error(str(exc)) from exc
@@ -442,9 +486,11 @@ def _infer_partial(
     *,
     status_msg: str = "Đang tổng hợp...",
     norm_preview: str = "",
+    status_log_text: str | None = None,
     runtime_device: str = "",
 ) -> tuple[str | None, str | None, str, str, str, str]:
-    return None, None, status_msg, norm_preview, log.text(), runtime_device
+    log_text = status_log_text if status_log_text is not None else log.text()
+    return None, None, status_msg, norm_preview, log_text, runtime_device
 
 
 def infer_tts(
@@ -524,9 +570,16 @@ def infer_tts(
                 yield _infer_partial(
                     log,
                     norm_preview=norm_preview,
+                    status_log_text=event.status_log_text or log.text(),
                     runtime_device=runtime_device,
                 )
             elif isinstance(event, TTSError):
+                yield _infer_partial(
+                    log,
+                    status_msg=event.message,
+                    status_log_text=event.status_log_text or log.text(),
+                    runtime_device=runtime_device,
+                )
                 raise gr.Error(event.message)
             elif isinstance(event, TTSResult):
                 yield (
@@ -542,14 +595,21 @@ def infer_tts(
     except ImportError as exc:
         log.error(str(exc))
         logger.warning("Normalize dependency: %s", exc)
+        yield _infer_partial(log, status_msg=str(exc), runtime_device=runtime_device)
         raise gr.Error(str(exc)) from exc
     except ValueError as exc:
         log.error(str(exc))
         logger.warning("Validation: %s", exc)
+        yield _infer_partial(log, status_msg=str(exc), runtime_device=runtime_device)
         raise gr.Error(str(exc)) from exc
     except Exception as exc:
         log.error(str(exc))
         logger.error("infer_tts failed:\n%s", traceback.format_exc())
+        yield _infer_partial(
+            log,
+            status_msg=f"Lỗi: {exc}",
+            runtime_device=runtime_device,
+        )
         raise gr.Error(f"Lỗi: {exc}\nChi tiết: logs/app.log") from exc
 
 
@@ -933,6 +993,22 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
         )
 
         with gr.Accordion("Debug — công cụ phát triển", open=True):
+            preview_chunks_btn = gr.Button(
+                "Xem trước chunk (ô 3)",
+                size="sm",
+                variant="secondary",
+            )
+            chunk_preview = gr.Textbox(
+                label="Xem trước chunk / micro-chunk — trước TTS",
+                lines=16,
+                max_lines=50,
+                interactive=False,
+                elem_classes=[TEXTBOX_UNICODE_CLASS],
+                placeholder=(
+                    "Cấu hình pipeline + min/max chunk + nghỉ → nhập văn bản ô 3 → "
+                    "Xem trước chunk. [NL] = xuống dòng (nghỉ nội bộ sau gộp micro-chunk)."
+                ),
+            )
             with gr.Row():
                 ode_seed_input = gr.Number(
                     label="ODE seed",
@@ -1114,9 +1190,31 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 norm_pipeline_state,
                 chunk_min_chars,
                 chunk_max_chars,
+                pause_sentence,
+                pause_paragraph,
+                pause_chapter,
+                pause_enum_item,
+                pause_forced,
                 input_mode,
             ],
             outputs=[norm_preview],
+        )
+        preview_chunks_btn.click(
+            preview_chunks,
+            inputs=[
+                gen_text,
+                gen_txt_source_path,
+                norm_pipeline_state,
+                chunk_min_chars,
+                chunk_max_chars,
+                pause_sentence,
+                pause_paragraph,
+                pause_chapter,
+                pause_enum_item,
+                pause_forced,
+                input_mode,
+            ],
+            outputs=[chunk_preview],
         )
         export_norm_btn.click(
             export_normalized_text,

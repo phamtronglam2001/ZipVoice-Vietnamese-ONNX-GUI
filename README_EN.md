@@ -12,11 +12,11 @@ Weights exported from [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hy
 
 - Zero-shot voice: bundled voices in `assets/` or upload WAV + transcript
 - **int4** / **int8** quant (CPU or CUDA/DirectML via ONNX Runtime)
-- Configurable text normalization pipeline (extensible registry in `src/text/normalizers/`)
+- Configurable text normalization pipeline (optional dot_newline step, extensible registry in `src/text/normalizers/`)
 - Chunk **min / max characters**; short micro-segments merged with `\n` before one synthesis call
 - Audiobook pauses: sentence / paragraph / chapter / enum / comma split
 - JSON presets (`profiles/`), CLI (`run_cli.bat`)
-- Gradio: per-chunk WAV export, ODE seed, runtime device log
+- Gradio: chunk preview, per-chunk WAV export, ODE seed, runtime device log
 
 ---
 

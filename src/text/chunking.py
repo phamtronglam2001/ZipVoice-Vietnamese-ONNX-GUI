@@ -389,3 +389,57 @@ def split_text_for_tts(
 
 def chunk_text(text: str, max_chars: int = 135) -> list[str]:
     return [c.text for c in split_text_for_tts(text, max_chars=max_chars)]
+
+
+CHUNK_PREVIEW_NL_TAG = "[NL]"
+
+
+def _chunk_preview_flags(ch: TtsChunk) -> list[str]:
+    flags: list[str] = []
+    if ch.is_chapter_break:
+        flags.append("chapter")
+    if ch.is_paragraph_end:
+        flags.append("paragraph")
+    if ch.is_forced_split:
+        flags.append("forced split")
+    if ch.is_sentence_end and not ch.is_paragraph_end and not ch.is_chapter_break:
+        if ch.pause_after > 0 and ch.pause_after < PAUSE_PARAGRAPH_DEFAULT:
+            flags.append("sentence")
+    return flags
+
+
+def _chunk_preview_visible_text(text: str, *, newline_tag: str = CHUNK_PREVIEW_NL_TAG) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline_tag)
+
+
+def format_chunks_preview(
+    tts_chunks: list[TtsChunk],
+    *,
+    show_micro_merge: bool = True,
+    newline_tag: str = CHUNK_PREVIEW_NL_TAG,
+) -> str:
+    """Human-readable preview of final TTS chunks (post micro-merge)."""
+    if not tts_chunks:
+        return "(Không có chunk — văn bản trống)"
+
+    total = len(tts_chunks)
+    lines = [f"Tổng: {total} chunk sẽ tổng hợp", ""]
+    for i, ch in enumerate(tts_chunks):
+        flags = _chunk_preview_flags(ch)
+        meta = (
+            f"Chunk {i + 1}/{total} ({len(ch.text)} chars, "
+            f"pause_after={ch.pause_after:.2f}s"
+        )
+        if ch.leading_pause > 0:
+            meta += f", leading_pause={ch.leading_pause:.2f}s"
+        if flags:
+            meta += f", {', '.join(flags)}"
+        meta += ")"
+        if show_micro_merge and "\n" in ch.text:
+            meta += " [micro-merged]"
+        lines.append(meta)
+        visible = _chunk_preview_visible_text(ch.text, newline_tag=newline_tag)
+        lines.append(f"  {visible}")
+        if i < total - 1:
+            lines.append("")
+    return "\n".join(lines)

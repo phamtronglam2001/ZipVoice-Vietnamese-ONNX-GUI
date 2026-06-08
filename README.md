@@ -12,11 +12,11 @@ Model weights export từ [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.c
 
 - Giọng zero-shot: chọn giọng trong `assets/` hoặc upload WAV + transcript
 - Quant **int4** / **int8** (CPU hoặc CUDA/DirectML qua ONNX Runtime)
-- Pipeline chuẩn hóa text tùy chỉnh (VieNeu, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
+- Pipeline chuẩn hóa text tùy chỉnh (VieNeu, dot_newline step, sea-g2p, cấu trúc TTS, …) — registry trong `src/text/normalizers/`
 - Chia chunk **min / max ký tự**; gộp micro-chunk ngắn bằng `\n` trước khi synth
 - Nghỉ audiobook: câu / đoạn / chương / enum / cắt phẩy
 - Preset JSON (`profiles/`), CLI (`run_cli.bat`)
-- Gradio: export từng chunk WAV, ODE seed, log thiết bị ONNX
+- Gradio: chunk preview + export từng chunk WAV, ODE seed, log thiết bị ONNX
 
 ---
 

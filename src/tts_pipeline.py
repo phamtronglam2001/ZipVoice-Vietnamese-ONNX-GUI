@@ -17,7 +17,9 @@ import numpy as np
 
 from assets_loader import get_voice_by_id
 from chunk_synthesis import (
+    ChunkSynthResult,
     clamp_parallel_workers,
+    iter_synthesize_tts_chunks,
     parallel_workers_clamp_message,
     synthesize_tts_chunks,
 )
@@ -128,6 +130,8 @@ class TTSProgress:
     norm_preview: str = ""
 
     runtime_device: str = ""
+
+    status_log_text: str = ""
 
 @dataclass
 
@@ -318,6 +322,8 @@ def iter_tts_pipeline(
             norm_preview=norm_preview_short,
 
             runtime_device=runtime_device,
+
+            status_log_text=log.text(),
         )
 
     try:
@@ -649,9 +655,18 @@ def iter_tts_pipeline(
 
         ]
 
+        synth_holder = ChunkSynthResult(
+            wave_parts=wave_parts,
+            normalized_preview="",
+            elapsed_s=0.0,
+            effective_workers=1,
+            parallel_used=False,
+            chunks_synthesized=0,
+        )
+
         try:
 
-            synth_result = synthesize_tts_chunks(
+            for _ in iter_synthesize_tts_chunks(
 
                 engine=engine,
 
@@ -687,7 +702,13 @@ def iter_tts_pipeline(
                 progress=prog,
 
                 status_log=log,
-            )
+
+                result_holder=synth_holder,
+            ):
+
+                yield snap()
+
+            synth_result = synth_holder
 
         except RuntimeError as exc:
 

@@ -21,12 +21,13 @@ from audio.post_process import (
     join_tts_audio_chunks,
     prepend_leading_pause,
 )
-from text.chunking import TtsChunk, split_text_for_tts
+from text.chunking import TtsChunk, format_chunks_preview, split_text_for_tts
 from text.io import read_text_file
 from text.normalizers import (
     build_normalize_pipeline,
     normalize_text_pipeline,
 )
+from text.normalizers.dot_newline import dot_space_to_newline
 from text.normalizers.period_linebreak import (
     brackets_to_newlines,
     join_soft_breaks,
@@ -40,6 +41,40 @@ from text.pipeline import normalize_full_document, post_process_text
 
 
 class NormalizePipelineTests(unittest.TestCase):
+
+    def test_dot_space_empty_pipeline_no_conversion(self):
+        raw = "một. đọc"
+        doc = normalize_full_document(raw, [])
+        self.assertNotIn("\n", doc)
+        self.assertEqual(doc, "một. đọc")
+
+    def test_dot_space_pipeline_step_converts(self):
+        raw = "một. đọc"
+        pipe = build_normalize_pipeline(["dot_newline"])
+        out = normalize_text_pipeline(raw, pipe)
+        self.assertEqual(out, "một.\nđọc")
+
+    def test_dot_space_direct(self):
+        self.assertEqual(dot_space_to_newline("một. đọc"), "một.\nđọc")
+
+    def test_dot_space_preserves_decimal(self):
+        raw = "3.14 số"
+        self.assertEqual(dot_space_to_newline(raw), raw)
+        doc = normalize_full_document(raw, [])
+        self.assertNotIn("\n", doc)
+        self.assertIn("3.14", doc)
+
+    def test_dot_space_skips_digit_before_dot(self):
+        raw = "3. 14 số"
+        self.assertEqual(dot_space_to_newline(raw), raw)
+
+    def test_vieneu_period_break_preserves_dot_newlines(self):
+        raw = "một. đọc đoạn"
+        pipe = build_normalize_pipeline(["dot_newline", "vieneu", "period_break"])
+        out = normalize_text_pipeline(raw, pipe)
+        self.assertIn("\n", out)
+        self.assertIn("một.", out)
+        self.assertIn("đọc", out)
 
     def test_pipeline_chains_period_break_after_vieneu(self):
 
@@ -416,6 +451,24 @@ class NormalizePipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 1)
 
 
+
+    def test_format_chunks_preview_newline_tag_and_pause_metadata(self):
+        merge_log: list[str] = []
+        chunks = split_text_for_tts(
+            "một.\nví dụ đoạn văn",
+            max_chars=135,
+            min_chars=12,
+            pause_paragraph=0.65,
+            merge_log=merge_log,
+        )
+        preview = format_chunks_preview(chunks, show_micro_merge=True)
+        self.assertIn("[NL]", preview)
+        self.assertIn("pause_after=", preview)
+        self.assertIn("Chunk 1/", preview)
+        self.assertIn("một.", preview)
+        self.assertIn("ví dụ đoạn văn", preview)
+        if "\n" in chunks[0].text:
+            self.assertIn("[micro-merged]", preview)
 
     def test_read_text_file_normalizes_crlf(self):
 

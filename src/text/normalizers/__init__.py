@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Callable
 
+from text.normalizers.dot_newline import dot_space_to_newline
 from text.normalizers.period_linebreak import (
     join_soft_breaks,
     newline_sentence_boundary,
@@ -22,6 +23,7 @@ NORMALIZE_BACKENDS: dict[str, str] = {
     "join_soft_breaks": "Gộp xuống dòng PDF (dòng ngắn, viết thường)",
     "newline_sentence": "Xuống dòng → ranh giới câu (thêm chấm)",
     "period_break": "Cấu trúc TTS (ngoặc→xuống dòng, số+chấm→xuống dòng)",
+    "dot_newline": "Newline (chấm + space → xuống dòng)",
     "sea_g2p": "sea-g2p Normalizer",
 }
 
@@ -31,6 +33,7 @@ NORMALIZE_STEP_CHOICES: dict[str, str] = {
     "join_soft_breaks": NORMALIZE_BACKENDS["join_soft_breaks"],
     "newline_sentence": NORMALIZE_BACKENDS["newline_sentence"],
     "period_break": NORMALIZE_BACKENDS["period_break"],
+    "dot_newline": NORMALIZE_BACKENDS["dot_newline"],
     "sea_g2p": NORMALIZE_BACKENDS["sea_g2p"],
 }
 
@@ -76,8 +79,14 @@ def _normalize_sea_g2p(text: str) -> str:
 
 
 # Plugin-style registry: add a module + entry here to expose a new normalizer step.
+def _normalize_vieneu(text: str) -> str:
+    """Per-line space collapse so paragraph breaks (\\n) survive."""
+    return _normalize_per_line(text, clean_text_noise)
+
+
 NORMALIZERS: dict[str, NormalizerFn] = {
-    "vieneu": clean_text_noise,
+    "vieneu": _normalize_vieneu,
+    "dot_newline": dot_space_to_newline,
     "period_break": prepare_tts_structure,
     "newline_sentence": newline_sentence_boundary,
     "join_soft_breaks": join_soft_breaks,
@@ -224,7 +233,7 @@ def pipeline_move(
 
 
 def normalize_text_pipeline(text: str, backends: list[str]) -> str:
-    """Apply pipeline steps sequentially: text₀ → step₁ → text₁ → …"""
+    """Apply pipeline steps in order: text₀ → step₁ → text₁ → …"""
     result = text
     for backend in backends:
         result = normalize_text(result, backend)

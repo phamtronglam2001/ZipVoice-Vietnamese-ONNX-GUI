@@ -37,6 +37,7 @@ src/
     io.py                # read_text_file
     normalizers/
       __init__.py        # NORMALIZERS registry, build_normalize_pipeline, GUI labels
+      dot_newline.py     # optional step: period+space → newline
       period_linebreak.py
       vieneu_text.py
   audio/
@@ -63,7 +64,7 @@ All set `PYTHONPATH=%~dp0src`. Scripts under `scripts/` prepend `ROOT / "src"` t
 
 ## Text pipeline
 
-1. **Normalize** — `text.pipeline.normalize_full_document()` runs steps from `text.normalizers.NORMALIZERS` (user-ordered in GUI).
+1. **Normalize** — `text.pipeline.normalize_full_document()` runs user-selected steps from `text.normalizers.NORMALIZERS` in GUI order via `normalize_text_pipeline()`. Optional `dot_newline` (`(?<![0-9])\.\s+` → `\n`) converts period+space to newlines when added to the pipeline (typically before `period_break`).
 2. **Chunk** — `text.chunking.split_text_for_tts()` respects max/min chars; micro-chunks below `min_chars` merge with `\n` between parts (one synthesis call).
 3. **Per chunk** — `prepare_tts_text(..., already_normalized=True)` light cleanup only.
 4. **G2P** — `EspeakTokenizer` → ONNX `generate()` per chunk.
@@ -85,11 +86,25 @@ NORMALIZE_ADD_CHOICES["my_step"] = NORMALIZE_BACKENDS["my_step"]
 
 3. Add tests in `src/test_normalize_pipeline.py`.
 
+## Chunk preview (GUI debug)
+
+`text.chunking.format_chunks_preview()` formats final post-merge `TtsChunk` list for inspection before synthesis:
+
+```
+Chunk 1/7 (92 chars, pause_after=0.65s, paragraph)
+  một.[NL]top các mẫu viết đoạn văn...
+```
+
+- `[NL]` — literal newline inside chunk text (often from micro-chunk merge via `\n`).
+- `pause_after` / `leading_pause` — silence inserted between chunks in `join_tts_audio_chunks`.
+- `[micro-merged]` — chunk text contains `\n` (short lines were joined into one synthesis unit).
+- Gradio: **Debug → Xem trước chunk (ô 3)** uses `text.pipeline.preview_chunks_output()` with current pipeline, min/max chars, and pause sliders.
+
 ## Pause model (current)
 
 | Level | Mechanism |
 |-------|-----------|
-| Text | `period_break`: `()[]{}` → newline; enum `một.` → line break |
+| Text | `dot_newline`: `. ` → newline; `period_break`: `()[]{}` → newline; enum `một.` → line break |
 | Micro-merge | `_join_merged_chunk_parts`: `\n` between merged short pieces |
 | Between chunks | `TtsChunk.pause_after`, `leading_pause` → silence in `join_tts_audio_chunks` |
 

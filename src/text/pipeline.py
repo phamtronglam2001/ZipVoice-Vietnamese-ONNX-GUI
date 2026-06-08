@@ -7,7 +7,17 @@ from pathlib import Path
 from typing import Literal
 
 from config import OUTPUT_DIR
-from text.chunking import DEFAULT_CHUNK_MIN_CHARS, split_text_for_tts
+from text.chunking import (
+    DEFAULT_CHUNK_MIN_CHARS,
+    PAUSE_CHAPTER_DEFAULT,
+    PAUSE_ENUM_DEFAULT,
+    PAUSE_FORCED_SPLIT_DEFAULT,
+    PAUSE_PARAGRAPH_DEFAULT,
+    PAUSE_SENTENCE_DEFAULT,
+    TtsChunk,
+    format_chunks_preview,
+    split_text_for_tts,
+)
 from text.normalizers import (
     build_normalize_pipeline,
     format_normalize_pipeline,
@@ -78,7 +88,7 @@ def normalize_full_document(
     if parse_input_mode(mode) == "prepared":
         return prepare_tts_text_passthrough(raw)
     steps = build_normalize_pipeline(pipeline)
-    normalized = normalize_text_pipeline(raw, steps) if steps else raw
+    normalized = normalize_text_pipeline(raw, steps)
     return post_process_text(normalized, apply_lower=True)
 
 
@@ -110,13 +120,51 @@ def export_normalized_text_file(
     return path.resolve()
 
 
-def preview_normalize_output(
+def split_tts_chunks_for_preview(
     text: str,
     pipeline_steps: list[str] | str | None,
+    *,
     chunk_max_chars: int = 135,
     chunk_min_chars: int = DEFAULT_CHUNK_MIN_CHARS,
     mode: NormalizeInputMode = "raw",
-    max_preview_chars: int | None = None,
+    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
+    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
+    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
+    pause_enum_item: float = PAUSE_ENUM_DEFAULT,
+    pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT,
+    merge_log: list[str] | None = None,
+) -> tuple[str, list[TtsChunk]]:
+    """Normalize document and split into final TTS chunks (post micro-merge)."""
+    input_mode = parse_input_mode(mode)
+    pipeline = build_normalize_pipeline(pipeline_steps)
+    normalized = normalize_full_document(text, pipeline, input_mode)
+    chunks = split_text_for_tts(
+        normalized,
+        max_chars=int(chunk_max_chars),
+        min_chars=int(chunk_min_chars),
+        pause_sentence=float(pause_sentence),
+        pause_paragraph=float(pause_paragraph),
+        pause_chapter=float(pause_chapter),
+        pause_enum_item=float(pause_enum_item),
+        pause_forced_split=float(pause_forced_split),
+        merge_log=merge_log,
+    )
+    return normalized, chunks
+
+
+def preview_chunks_output(
+    text: str,
+    pipeline_steps: list[str] | str | None,
+    *,
+    chunk_max_chars: int = 135,
+    chunk_min_chars: int = DEFAULT_CHUNK_MIN_CHARS,
+    mode: NormalizeInputMode = "raw",
+    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
+    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
+    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
+    pause_enum_item: float = PAUSE_ENUM_DEFAULT,
+    pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT,
+    show_micro_merge: bool = True,
 ) -> str:
     raw = (text or "").strip()
     if not raw:
@@ -125,11 +173,79 @@ def preview_normalize_output(
     input_mode = parse_input_mode(mode)
     pipeline = build_normalize_pipeline(pipeline_steps)
     label = format_normalize_pipeline(pipeline)
-    normalized = normalize_full_document(raw, pipeline, input_mode)
-    chunks = split_text_for_tts(
-        normalized,
-        max_chars=int(chunk_max_chars),
-        min_chars=int(chunk_min_chars),
+    merge_log: list[str] = []
+    normalized, chunks = split_tts_chunks_for_preview(
+        raw,
+        pipeline,
+        chunk_max_chars=int(chunk_max_chars),
+        chunk_min_chars=int(chunk_min_chars),
+        mode=input_mode,
+        pause_sentence=float(pause_sentence),
+        pause_paragraph=float(pause_paragraph),
+        pause_chapter=float(pause_chapter),
+        pause_enum_item=float(pause_enum_item),
+        pause_forced_split=float(pause_forced_split),
+        merge_log=merge_log,
+    )
+
+    mode_label = INPUT_MODE_CHOICES.get(input_mode, input_mode)
+    lines = [
+        f"Chế độ nhập: {mode_label}",
+        f"Pipeline: {label}" + (
+            " (bỏ qua khi TTS)" if input_mode == "prepared" else ""
+        ),
+        f"Gốc: {len(raw):,} ký tự → sau xử lý: {len(normalized):,} ký tự",
+        (
+            f"Chunks TTS (min {int(chunk_min_chars)}, max {int(chunk_max_chars)} "
+            f"ký tự/chunk): {len(chunks)}"
+        ),
+        (
+            f"Nghỉ: câu={pause_sentence}s, đoạn={pause_paragraph}s, "
+            f"chương={pause_chapter}s, enum={pause_enum_item}s, cắt={pause_forced_split}s"
+        ),
+        "",
+        "── Chunk sẽ tổng hợp (sau gộp micro-chunk) ──",
+        "",
+        format_chunks_preview(chunks, show_micro_merge=show_micro_merge),
+    ]
+    if merge_log:
+        lines.extend(["", "── Nhật ký gộp micro-chunk ──"])
+        lines.extend(merge_log)
+    return "\n".join(lines)
+
+
+def preview_normalize_output(
+    text: str,
+    pipeline_steps: list[str] | str | None,
+    chunk_max_chars: int = 135,
+    chunk_min_chars: int = DEFAULT_CHUNK_MIN_CHARS,
+    mode: NormalizeInputMode = "raw",
+    max_preview_chars: int | None = None,
+    pause_sentence: float = PAUSE_SENTENCE_DEFAULT,
+    pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT,
+    pause_chapter: float = PAUSE_CHAPTER_DEFAULT,
+    pause_enum_item: float = PAUSE_ENUM_DEFAULT,
+    pause_forced_split: float = PAUSE_FORCED_SPLIT_DEFAULT,
+    include_chunk_preview: bool = True,
+) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return "(Chưa có văn bản — nhập ô số 3 hoặc upload file .txt / .md)"
+
+    input_mode = parse_input_mode(mode)
+    pipeline = build_normalize_pipeline(pipeline_steps)
+    label = format_normalize_pipeline(pipeline)
+    normalized, chunks = split_tts_chunks_for_preview(
+        raw,
+        pipeline,
+        chunk_max_chars=int(chunk_max_chars),
+        chunk_min_chars=int(chunk_min_chars),
+        mode=input_mode,
+        pause_sentence=float(pause_sentence),
+        pause_paragraph=float(pause_paragraph),
+        pause_chapter=float(pause_chapter),
+        pause_enum_item=float(pause_enum_item),
+        pause_forced_split=float(pause_forced_split),
     )
 
     mode_label = INPUT_MODE_CHOICES.get(input_mode, input_mode)
@@ -156,21 +272,28 @@ def preview_normalize_output(
     else:
         lines.append(normalized)
 
-    if len(chunks) > 1:
-        lines.extend(["", "── Xem trước từng chunk (5 chunk đầu) ──"])
-        for i, ch in enumerate(chunks[:5]):
-            lines.append(f"[{i + 1}/{len(chunks)}] {ch.text}")
-        if len(chunks) > 5:
-            lines.append(f"… và {len(chunks) - 5} chunk nữa")
+    if include_chunk_preview and chunks:
+        lines.extend([
+            "",
+            "── Chunk sẽ tổng hợp (5 chunk đầu, [NL]=xuống dòng) ──",
+            "",
+        ])
+        preview_limit = 5
+        lines.append(
+            format_chunks_preview(chunks[:preview_limit], show_micro_merge=True)
+        )
+        if len(chunks) > preview_limit:
+            lines.append(f"… và {len(chunks) - preview_limit} chunk nữa")
 
     return "\n".join(lines)
 
 
 def prepare_tts_text(text: str, backend: str | list[str] = "none") -> str:
     if isinstance(backend, list):
-        normalized = normalize_text_pipeline(text, backend) if backend else text
+        steps = backend
     else:
-        normalized = normalize_text(text, backend)
+        steps = build_normalize_pipeline(backend)
+    normalized = normalize_text_pipeline(text, steps)
     return post_process_text(normalized, apply_lower=True)
 
 

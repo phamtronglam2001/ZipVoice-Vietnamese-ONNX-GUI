@@ -10,7 +10,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable, Iterator
 
 import numpy as np
 
@@ -125,6 +125,215 @@ def _noop_progress(
     pass
 
 
+def _notify_status(status_log: StatusLog | None, on_status: Callable[[], None] | None) -> None:
+    if on_status is not None:
+        on_status()
+
+
+def iter_synthesize_tts_chunks(
+    *,
+    engine,
+    tts_chunks: list[TtsChunk],
+    wave_parts: list[np.ndarray],
+    norm_pipeline: list[str],
+    tts_input_mode: str,
+    ref_audio_path: str,
+    ref_text: str,
+    speed: float,
+    num_step: int,
+    guidance_scale: float,
+    t_shift: float,
+    onnx_quant_mode: str,
+    parallel_workers: int,
+    use_onnx_gpu: bool = False,
+    ode_seed: int = 42,
+    use_fixed_seed: bool = True,
+    progress: ProgressFn | None = None,
+    status_log: StatusLog | None = None,
+    on_status: Callable[[], None] | None = None,
+    result_holder: ChunkSynthResult | None = None,
+) -> Iterator[None]:
+    """
+    Like synthesize_tts_chunks but yields after each status update for streaming GUIs.
+    Final ChunkSynthResult is stored on result_holder when provided.
+    """
+    if progress is None:
+        progress = _noop_progress
+    use_gpu = bool(use_onnx_gpu) and not is_force_cpu()
+    requested_workers = int(parallel_workers)
+    workers = clamp_parallel_workers(requested_workers, use_gpu=use_gpu)
+    if requested_workers != workers:
+        clamp_msg = parallel_workers_clamp_message(
+            requested_workers, workers, use_gpu=use_gpu
+        )
+        logger.warning(clamp_msg)
+        if status_log is not None:
+            status_log.warn(clamp_msg)
+        _notify_status(status_log, on_status)
+        yield None
+
+    def _ref_show_info(msg: str) -> None:
+        logger.info(msg)
+        if status_log is not None:
+            status_log.info(f"Ref audio: {msg}")
+            _notify_status(status_log, on_status)
+
+    if status_log is not None:
+        status_log.stage_begin("Tiền xử lý giọng mẫu")
+        status_log.info(f"ref_audio_path={ref_audio_path}")
+        status_log.info(f"ref_text_len={len(ref_text.strip())} ký tự")
+        _notify_status(status_log, on_status)
+        yield None
+
+    ref_audio, resolved_ref_text = preprocess_ref_audio_text(
+        ref_audio_path,
+        ref_text,
+        show_info=_ref_show_info,
+    )
+    prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
+
+    if status_log is not None:
+        status_log.info(f"prompt_normalized_len={len(prompt_normalized)} ký tự")
+        status_log.stage_end("Tiền xử lý giọng mẫu", f"temp_wav={ref_audio}")
+        _notify_status(status_log, on_status)
+        yield None
+
+    pending: list[tuple[int, str]] = []
+    normalized_preview = ""
+    total = len(tts_chunks)
+
+    for i, tts_chunk in enumerate(tts_chunks):
+        normalized = prepare_for_tts(
+            tts_chunk.text, norm_pipeline, tts_input_mode, already_normalized=True
+        )
+        if not normalized.strip():
+            msg = f"Bỏ qua chunk {i + 1}/{total}: rỗng sau chuẩn hóa"
+            logger.warning("skip chunk %d/%d: empty after normalize", i + 1, total)
+            if status_log is not None:
+                status_log.warn(msg)
+                _notify_status(status_log, on_status)
+                yield None
+            wave_parts[i] = np.array([], dtype=np.float32)
+            continue
+        if not normalized_preview:
+            normalized_preview = normalized[:500] + (
+                "…" if len(normalized) > 500 else ""
+            )
+        pending.append((i, normalized))
+
+    if not pending:
+        result = ChunkSynthResult(
+            wave_parts=wave_parts,
+            normalized_preview=normalized_preview,
+            elapsed_s=0.0,
+            effective_workers=1,
+            parallel_used=False,
+            chunks_synthesized=0,
+        )
+        if result_holder is not None:
+            result_holder.__dict__.update(result.__dict__)
+        return
+
+    if status_log is not None:
+        status_log.stage_begin("Tổng hợp chunk")
+        _notify_status(status_log, on_status)
+        yield None
+    t0 = time.perf_counter()
+    use_parallel = workers > 1 and len(pending) > 1
+
+    if use_parallel:
+        logger.info(
+            "parallel synthesis | workers=%d | pending=%d/%d chunks",
+            workers,
+            len(pending),
+            total,
+        )
+        if status_log is not None:
+            status_log.info(
+                f"Chế độ song song: {workers} workers, "
+                f"{len(pending)}/{total} chunk cần tổng hợp"
+            )
+            _notify_status(status_log, on_status)
+            yield None
+        yield from _iter_parallel(
+            pending=pending,
+            wave_parts=wave_parts,
+            prompt_normalized=prompt_normalized,
+            ref_audio=ref_audio,
+            speed=speed,
+            num_step=num_step,
+            guidance_scale=guidance_scale,
+            t_shift=t_shift,
+            onnx_quant_mode=onnx_quant_mode,
+            use_onnx_gpu=use_gpu,
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
+            workers=workers,
+            total=total,
+            progress=progress,
+            status_log=status_log,
+            on_status=on_status,
+        )
+    else:
+        logger.info(
+            "sequential synthesis | pending=%d/%d chunks",
+            len(pending),
+            total,
+        )
+        if status_log is not None:
+            status_log.info(
+                f"Chế độ tuần tự: {len(pending)}/{total} chunk cần tổng hợp"
+            )
+            _notify_status(status_log, on_status)
+            yield None
+        yield from _iter_sequential(
+            pending=pending,
+            wave_parts=wave_parts,
+            prompt_normalized=prompt_normalized,
+            ref_audio=ref_audio,
+            speed=speed,
+            num_step=num_step,
+            guidance_scale=guidance_scale,
+            t_shift=t_shift,
+            engine=engine,
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
+            total=total,
+            progress=progress,
+            status_log=status_log,
+            on_status=on_status,
+        )
+
+    elapsed = time.perf_counter() - t0
+    mode = "parallel" if use_parallel else "sequential"
+    logger.info(
+        "chunk synthesis done | mode=%s | workers=%d | elapsed=%.1fs | chunks=%d",
+        mode,
+        workers if use_parallel else 1,
+        elapsed,
+        len(pending),
+    )
+    if status_log is not None:
+        status_log.stage_end(
+            "Tổng hợp chunk",
+            f"mode={mode}, workers={workers if use_parallel else 1}, "
+            f"chunks={len(pending)}",
+        )
+        _notify_status(status_log, on_status)
+        yield None
+
+    result = ChunkSynthResult(
+        wave_parts=wave_parts,
+        normalized_preview=normalized_preview,
+        elapsed_s=elapsed,
+        effective_workers=workers if use_parallel else 1,
+        parallel_used=use_parallel,
+        chunks_synthesized=len(pending),
+    )
+    if result_holder is not None:
+        result_holder.__dict__.update(result.__dict__)
+
+
 def synthesize_tts_chunks(
     *,
     engine,
@@ -150,159 +359,40 @@ def synthesize_tts_chunks(
     Synthesize all chunks from scratch with current parameters.
     Falls back to sequential when workers==1 or only one pending chunk.
     """
-    if progress is None:
-        progress = _noop_progress
-    use_gpu = bool(use_onnx_gpu) and not is_force_cpu()
-    requested_workers = int(parallel_workers)
-    workers = clamp_parallel_workers(requested_workers, use_gpu=use_gpu)
-    if requested_workers != workers:
-        clamp_msg = parallel_workers_clamp_message(
-            requested_workers, workers, use_gpu=use_gpu
-        )
-        logger.warning(clamp_msg)
-        if status_log is not None:
-            status_log.warn(clamp_msg)
-
-    def _ref_show_info(msg: str) -> None:
-        logger.info(msg)
-        if status_log is not None:
-            status_log.info(f"Ref audio: {msg}")
-
-    if status_log is not None:
-        status_log.stage_begin("Tiền xử lý giọng mẫu")
-        status_log.info(f"ref_audio_path={ref_audio_path}")
-        status_log.info(f"ref_text_len={len(ref_text.strip())} ký tự")
-
-    ref_audio, resolved_ref_text = preprocess_ref_audio_text(
-        ref_audio_path,
-        ref_text,
-        show_info=_ref_show_info,
-    )
-    prompt_normalized = prepare_tts_text(resolved_ref_text, norm_pipeline)
-
-    if status_log is not None:
-        status_log.info(f"prompt_normalized_len={len(prompt_normalized)} ký tự")
-        status_log.stage_end("Tiền xử lý giọng mẫu", f"temp_wav={ref_audio}")
-
-    pending: list[tuple[int, str]] = []
-    normalized_preview = ""
-    total = len(tts_chunks)
-
-    for i, tts_chunk in enumerate(tts_chunks):
-        normalized = prepare_for_tts(
-            tts_chunk.text, norm_pipeline, tts_input_mode, already_normalized=True
-        )
-        if not normalized.strip():
-            msg = f"Bỏ qua chunk {i + 1}/{total}: rỗng sau chuẩn hóa"
-            logger.warning("skip chunk %d/%d: empty after normalize", i + 1, total)
-            if status_log is not None:
-                status_log.warn(msg)
-            wave_parts[i] = np.array([], dtype=np.float32)
-            continue
-        if not normalized_preview:
-            normalized_preview = normalized[:500] + (
-                "…" if len(normalized) > 500 else ""
-            )
-        pending.append((i, normalized))
-
-    if not pending:
-        return ChunkSynthResult(
-            wave_parts=wave_parts,
-            normalized_preview=normalized_preview,
-            elapsed_s=0.0,
-            effective_workers=1,
-            parallel_used=False,
-            chunks_synthesized=0,
-        )
-
-    if status_log is not None:
-        status_log.stage_begin("Tổng hợp chunk")
-    t0 = time.perf_counter()
-    use_parallel = workers > 1 and len(pending) > 1
-
-    if use_parallel:
-        logger.info(
-            "parallel synthesis | workers=%d | pending=%d/%d chunks",
-            workers,
-            len(pending),
-            total,
-        )
-        if status_log is not None:
-            status_log.info(
-                f"Chế độ song song: {workers} workers, "
-                f"{len(pending)}/{total} chunk cần tổng hợp"
-            )
-        _run_parallel(
-            pending=pending,
-            wave_parts=wave_parts,
-            prompt_normalized=prompt_normalized,
-            ref_audio=ref_audio,
-            speed=speed,
-            num_step=num_step,
-            guidance_scale=guidance_scale,
-            t_shift=t_shift,
-            onnx_quant_mode=onnx_quant_mode,
-            use_onnx_gpu=use_gpu,
-            ode_seed=ode_seed,
-            use_fixed_seed=use_fixed_seed,
-            workers=workers,
-            total=total,
-            progress=progress,
-            status_log=status_log,
-        )
-    else:
-        logger.info(
-            "sequential synthesis | pending=%d/%d chunks",
-            len(pending),
-            total,
-        )
-        if status_log is not None:
-            status_log.info(
-                f"Chế độ tuần tự: {len(pending)}/{total} chunk cần tổng hợp"
-            )
-        _run_sequential(
-            pending=pending,
-            wave_parts=wave_parts,
-            prompt_normalized=prompt_normalized,
-            ref_audio=ref_audio,
-            speed=speed,
-            num_step=num_step,
-            guidance_scale=guidance_scale,
-            t_shift=t_shift,
-            engine=engine,
-            ode_seed=ode_seed,
-            use_fixed_seed=use_fixed_seed,
-            total=total,
-            progress=progress,
-            status_log=status_log,
-        )
-
-    elapsed = time.perf_counter() - t0
-    mode = "parallel" if use_parallel else "sequential"
-    logger.info(
-        "chunk synthesis done | mode=%s | workers=%d | elapsed=%.1fs | chunks=%d",
-        mode,
-        workers if use_parallel else 1,
-        elapsed,
-        len(pending),
-    )
-    if status_log is not None:
-        status_log.stage_end(
-            "Tổng hợp chunk",
-            f"mode={mode}, workers={workers if use_parallel else 1}, "
-            f"chunks={len(pending)}",
-        )
-    return ChunkSynthResult(
+    holder = ChunkSynthResult(
         wave_parts=wave_parts,
-        normalized_preview=normalized_preview,
-        elapsed_s=elapsed,
-        effective_workers=workers if use_parallel else 1,
-        parallel_used=use_parallel,
-        chunks_synthesized=len(pending),
+        normalized_preview="",
+        elapsed_s=0.0,
+        effective_workers=1,
+        parallel_used=False,
+        chunks_synthesized=0,
     )
+    for _ in iter_synthesize_tts_chunks(
+        engine=engine,
+        tts_chunks=tts_chunks,
+        wave_parts=wave_parts,
+        norm_pipeline=norm_pipeline,
+        tts_input_mode=tts_input_mode,
+        ref_audio_path=ref_audio_path,
+        ref_text=ref_text,
+        speed=speed,
+        num_step=num_step,
+        guidance_scale=guidance_scale,
+        t_shift=t_shift,
+        onnx_quant_mode=onnx_quant_mode,
+        parallel_workers=parallel_workers,
+        use_onnx_gpu=use_onnx_gpu,
+        ode_seed=ode_seed,
+        use_fixed_seed=use_fixed_seed,
+        progress=progress,
+        status_log=status_log,
+        result_holder=holder,
+    ):
+        pass
+    return holder
 
 
-def _run_sequential(
+def _iter_sequential(
     *,
     pending: list[tuple[int, str]],
     wave_parts: list[np.ndarray],
@@ -318,12 +408,15 @@ def _run_sequential(
     total: int,
     progress: ProgressFn,
     status_log: StatusLog | None = None,
-) -> None:
+    on_status: Callable[[], None] | None = None,
+) -> Iterator[None]:
     done = total - len(pending)
     for i, normalized in pending:
         chunk_label = f"Chunk {i + 1}/{total} ({len(normalized)} ký tự)"
         if status_log is not None:
             status_log.info(f"Bắt đầu {chunk_label}")
+            _notify_status(status_log, on_status)
+            yield None
         progress(
             (done + 1) / total,
             desc=f"Đang tổng hợp đoạn {i + 1}/{total} (ONNX)...",
@@ -353,11 +446,15 @@ def _run_sequential(
             )
             if status_log is not None:
                 status_log.warn(msg)
+                _notify_status(status_log, on_status)
+                yield None
         elif status_log is not None:
             status_log.info(
                 f"Xong {chunk_label} — {wav.size} samples "
                 f"({time.perf_counter() - t_chunk:.2f}s)"
             )
+            _notify_status(status_log, on_status)
+            yield None
         wave_parts[i] = wav
         del wav
         done += 1
@@ -365,7 +462,7 @@ def _run_sequential(
             gc.collect()
 
 
-def _run_parallel(
+def _iter_parallel(
     *,
     pending: list[tuple[int, str]],
     wave_parts: list[np.ndarray],
@@ -383,7 +480,8 @@ def _run_parallel(
     total: int,
     progress: ProgressFn,
     status_log: StatusLog | None = None,
-) -> None:
+    on_status: Callable[[], None] | None = None,
+) -> Iterator[None]:
     norm_by_index = {i: normalized for i, normalized in pending}
     tasks = [
         (
@@ -416,6 +514,8 @@ def _run_parallel(
                 err_msg = f"Lỗi tổng hợp chunk {index + 1}/{total}: {err}"
                 if status_log is not None:
                     status_log.error(err_msg)
+                    _notify_status(status_log, on_status)
+                    yield None
                 raise RuntimeError(err_msg) from None
             normalized_len = len(norm_by_index.get(index, ""))
             chunk_label = f"Chunk {index + 1}/{total} ({normalized_len} ký tự)"
@@ -430,8 +530,12 @@ def _run_parallel(
                     status_log.warn(
                         f"Bỏ qua {chunk_label}: wav rỗng (0 mel frames)"
                     )
+                    _notify_status(status_log, on_status)
+                    yield None
             elif status_log is not None:
                 status_log.info(f"Xong {chunk_label} — {wav.size} samples")
+                _notify_status(status_log, on_status)
+                yield None
             wave_parts[index] = wav
             del wav
             completed += 1
