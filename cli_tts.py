@@ -71,7 +71,7 @@ def _read_input_text(args: argparse.Namespace) -> str:
     if args.text:
         return args.text
     if args.file:
-        from utils import read_text_file
+        from text.io import read_text_file
 
         return read_text_file(args.file)
     raise ValueError("Provide --text or --file")
@@ -122,7 +122,7 @@ def _resolve_input_mode(args: argparse.Namespace, preset: PresetConfig) -> str:
 
 
 def cmd_preview(args: argparse.Namespace) -> int:
-    from utils import export_normalized_text_file, preview_normalize_output
+    from text.pipeline import export_normalized_text_file, preview_normalize_output
 
     preset = _load_profile_arg(args.profile)
     text = _read_input_text(args)
@@ -131,6 +131,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
         text,
         preset.pipeline,
         chunk_max_chars=preset.chunk_max_chars,
+        chunk_min_chars=preset.chunk_min_chars,
         mode=mode,
     )
     print(out)
@@ -151,13 +152,13 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
 
     from chunk_synthesis import clamp_parallel_workers, synthesize_tts_chunks
     from onnx_engine import OnnxTTSEngine
-    from utils import (
+    from audio.post_process import join_tts_audio_chunks
+    from text.chunking import split_text_for_tts
+    from text.pipeline import (
         export_normalized_text_file,
         format_tts_timing_line,
-        join_tts_audio_chunks,
         normalize_full_document,
         preview_normalize_output,
-        split_text_for_tts,
     )
 
     preset = _load_profile_arg(args.profile)
@@ -182,6 +183,7 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
                 gen_text,
                 preset.pipeline,
                 chunk_max_chars=preset.chunk_max_chars,
+                chunk_min_chars=preset.chunk_min_chars,
                 mode=tts_input_mode,
             ))
         return 0
@@ -223,6 +225,7 @@ def cmd_synthesize(args: argparse.Namespace) -> int:
     tts_chunks = split_text_for_tts(
         normalized_doc,
         max_chars=preset.chunk_max_chars,
+        min_chars=preset.chunk_min_chars,
         pause_sentence=preset.pause_sentence,
         pause_paragraph=preset.pause_paragraph,
         pause_chapter=preset.pause_chapter,

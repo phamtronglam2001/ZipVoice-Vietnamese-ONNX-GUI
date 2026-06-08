@@ -1,20 +1,22 @@
-# ZipVoice Vietnamese ONNX — Slint GUI
+# ZipVoice Vietnamese ONNX — Slint GUI (production)
 
-Native desktop GUI synced with the Gradio app. Uses shared `tts_pipeline.py` at project root (same stages, defaults, and inference params).
+Native desktop GUI for **production TTS**. Uses shared `tts_pipeline.py` at project root (same stages, defaults, and inference params as Gradio).
+
+**Gradio** (`app.py`) is the **debug** surface: status-log tooling, export normalized `.txt`, export per-chunk WAVs, presets, in-app playback. Those features stay in Gradio only — not ported to Slint.
 
 ## Prerequisites
 
 - Completed project setup (`install_cpu.bat` or GPU install)
 - Models in `models/onnx/` and `models/vocoder/`
-- Python venv at `.venv/`
+- Python venv at `.venv/` (created by `uv venv` — may not include `pip.exe`)
 
 ## Install Slint
 
 ```bat
-.venv\Scripts\pip install -r requirements-slint.txt
+.venv\Scripts\python.exe -m pip install -r requirements-slint.txt
 ```
 
-Or double-click `run_slint_gui.bat` (auto-installs Slint if missing).
+Or double-click `run_slint_gui.bat` (auto-installs Slint if missing; uses `python -m pip` or `uv pip` when pip.exe is absent).
 
 ## Run
 
@@ -22,7 +24,7 @@ Or double-click `run_slint_gui.bat` (auto-installs Slint if missing).
 run_slint_gui.bat
 ```
 
-Uses the same CPU/GPU env as Gradio launchers (reads `.install_mode`; or use `run_cpu.bat` / `run_gpu.bat` env pattern).
+Uses the same CPU/GPU env as Gradio launchers: `run_slint_gui.bat` reads `.install_mode` and sets `ZIPVOICE_ONNX_GPU=1` when GPU (same as `run_gpu.bat`). Force CPU: `ZIPVOICE_FORCE_CPU=1`.
 
 Or:
 
@@ -47,7 +49,7 @@ slint_gui/
 
 Shared inference: `tts_pipeline.py` (project root). Gradio `app.py` also calls `iter_tts_pipeline` from the same module.
 
-## Synced with Gradio
+## Production features (Slint)
 
 | Feature | Notes |
 |---------|--------|
@@ -63,18 +65,29 @@ Shared inference: `tts_pipeline.py` (project root). Gradio `app.py` also calls `
 | Parallel workers | Same clamp rules as Gradio |
 | **Xem trước chuẩn hóa** | `preview_normalize_text()` |
 | **Tổng hợp ONNX** | `run_tts_pipeline()` — same status log stages as Gradio |
-| Status log (debug) | Stages: Đầu vào → Chuẩn hóa → Chia chunk → Load ONNX → synth → Ghép → Lưu → Hoàn tất |
+| Status log | Stages: Đầu vào → Chuẩn hóa → Chia chunk → Load ONNX → synth → Ghép → Lưu → Hoàn tất |
 | Output file path | Read-only path (open in OS file manager / player) |
 | Progress indicator | Chunk synthesis progress |
 
-## Intentionally omitted
+## Debug-only (Gradio — not in Slint)
+
+| Feature | Where |
+|---------|--------|
+| Export từng chunk WAV | Gradio accordion **Debug** → `output/chunk_test/` |
+| Export normalized `.txt` | Gradio button |
+| Preset load/save (`profiles/`) | Gradio preset accordion |
+| In-app WAV playback | Gradio audio widget |
+| CLI script | `scripts/export_chunk_wavs.py` |
+
+## Intentionally omitted from Slint
 
 | Gradio feature | Reason |
 |----------------|--------|
 | In-app WAV playback | No convenient Slint audio widget; use OS player on output path |
 | Drag-drop / mic ref audio | File picker is enough on desktop |
-| Export normalized `.txt` | Low value vs Gradio; use Gradio or CLI if needed |
-| Preset load/save (`profiles/`) | JSON preset UI not worth duplicating yet; use Gradio presets |
+| Export normalized `.txt` | Debug / QC — use Gradio |
+| Preset load/save | Debug / workflow — use Gradio presets |
+| Export per-chunk WAVs | Debug quality review — Gradio or `scripts/export_chunk_wavs.py` |
 | Markdown in status text | Plain text in Slint text areas |
 | Gradio file download widget | Output path + Explorer is simpler on desktop |
 

@@ -10,25 +10,12 @@ import re
 from typing import List, Tuple
 
 _NOISE_RULES: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"([.!?])[.,;:]+"), r"\1"),
-    (re.compile(r"[.,;:]+([.!?])"), r"\1"),
-    (re.compile(r"\s+[,;]\s+"), " "),
     (re.compile(r" {2,}"), " "),
 ]
-_MULTI_PUNCT = re.compile(r"([.!?])\s*[.!?]+")
-
-
-def _pick_strongest(m: re.Match) -> str:
-    s = m.group(0)
-    if "!" in s:
-        return "!"
-    if "?" in s:
-        return "?"
-    return "."
 
 
 def clean_text_noise(text: str) -> str:
-    """Dọn lỗi dấu câu lặp / khoảng trắng thừa (VieNeu v2 noise rules)."""
+    """Dọn khoảng trắng thừa (VieNeu v2 noise rules, punctuation preserved)."""
     for pattern, repl in _NOISE_RULES:
         text = pattern.sub(repl, text)
-    return _MULTI_PUNCT.sub(_pick_strongest, text).strip()
+    return text.strip()

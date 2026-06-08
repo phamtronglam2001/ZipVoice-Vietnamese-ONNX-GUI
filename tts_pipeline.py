@@ -33,7 +33,7 @@ from config import (
 )
 
 from export_audio import save_output
-from onnx_engine import OnnxTTSEngine
+from onnx_engine import OnnxTTSEngine, format_ode_seed_log
 from onnx_providers import (
 
     get_runtime_device_summary,
@@ -47,27 +47,16 @@ from onnx_providers import (
 
 from onnx_quant import file_size_mb, missing_onnx_files, quant_readiness_hint
 from status_log import StatusLog
-from utils import (
-
+from audio.post_process import join_tts_audio_chunks
+from text.chunking import split_text_for_tts
+from text.io import read_text_file
+from text.normalizers import build_normalize_pipeline, format_normalize_pipeline
+from text.pipeline import (
     INPUT_MODE_CHOICES,
-
-    build_normalize_pipeline,
-
-    format_normalize_pipeline,
-
     format_tts_timing_line,
-
-    join_tts_audio_chunks,
-
     normalize_full_document,
-
-    preview_normalize_output,
-
-    read_text_file,
-
     parse_input_mode,
-
-    split_text_for_tts,
+    preview_normalize_output,
 )
 
 logger = logging.getLogger("zipvoice_onnx_gui")
@@ -98,6 +87,8 @@ class TTSRequest:
 
     chunk_max_chars: int = 135
 
+    chunk_min_chars: int = 70
+
     pause_sentence: float = 0.35
 
     pause_paragraph: float = 0.65
@@ -123,6 +114,10 @@ class TTSRequest:
     parallel_workers: int = 1
 
     use_onnx_gpu: bool = False
+
+    ode_seed: int = 42
+
+    use_fixed_seed: bool = True
 
 @dataclass
 
@@ -473,7 +468,7 @@ def iter_tts_pipeline(
 
         log.info(
 
-            f"chunk_max_chars={req.chunk_max_chars}, pauses: "
+            f"chunk_min_chars={req.chunk_min_chars}, chunk_max_chars={req.chunk_max_chars}, pauses: "
 
             f"câu={req.pause_sentence}s, đoạn={req.pause_paragraph}s, "
 
@@ -487,6 +482,13 @@ def iter_tts_pipeline(
 
             f"onnx_quant={req.onnx_quant_mode}, workers={workers}, gpu={use_gpu}"
 
+        )
+
+        log.info(
+            format_ode_seed_log(
+                ode_seed=req.ode_seed,
+                use_fixed_seed=req.use_fixed_seed,
+            )
         )
 
         yield snap()
@@ -571,6 +573,8 @@ def iter_tts_pipeline(
             normalized_doc,
 
             max_chars=int(req.chunk_max_chars),
+
+            min_chars=int(req.chunk_min_chars),
 
             pause_sentence=float(req.pause_sentence),
 
@@ -675,6 +679,10 @@ def iter_tts_pipeline(
                 parallel_workers=workers,
 
                 use_onnx_gpu=use_gpu,
+
+                ode_seed=int(req.ode_seed),
+
+                use_fixed_seed=bool(req.use_fixed_seed),
 
                 progress=prog,
 
@@ -782,6 +790,8 @@ def iter_tts_pipeline(
 
             chunk_max_chars=int(req.chunk_max_chars),
 
+            chunk_min_chars=int(req.chunk_min_chars),
+
             mode=tts_input_mode,
         )
 
@@ -793,7 +803,7 @@ def iter_tts_pipeline(
 
             f"**Chuẩn hóa:** {norm_label} · "
 
-            f"**Chunks:** {len(tts_chunks)} (max {req.chunk_max_chars} ký tự/chunk, "
+            f"**Chunks:** {len(tts_chunks)} (min {req.chunk_min_chars}, max {req.chunk_max_chars} ký tự/chunk, "
 
             f"~{est_min} phút ước tính){parallel_note}\n\n"
 
@@ -906,6 +916,8 @@ def preview_normalize_text(
 
     chunk_max_chars: int,
 
+    chunk_min_chars: int,
+
     input_mode: str,
 ) -> str:
 
@@ -918,6 +930,8 @@ def preview_normalize_text(
         norm_pipeline,
 
         chunk_max_chars=int(chunk_max_chars),
+
+        chunk_min_chars=int(chunk_min_chars),
 
         mode=parse_input_mode(input_mode),
     )

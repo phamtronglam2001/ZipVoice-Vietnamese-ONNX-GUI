@@ -25,19 +25,28 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-if not exist ".venv\Scripts\pip.exe" (
-    echo [ERROR] pip khong tim thay trong .venv
-    pause
-    exit /b 1
-)
-
 echo Kiem tra Slint...
 ".venv\Scripts\python.exe" -c "import slint" 2>nul
 if errorlevel 1 (
     echo Cai dat Slint tu requirements-slint.txt...
-    ".venv\Scripts\python.exe" -m pip install -r requirements-slint.txt
+    ".venv\Scripts\python.exe" -m pip install -r requirements-slint.txt 2>nul
     if errorlevel 1 (
-        echo [ERROR] Khong cai duoc slint. Xem requirements-slint.txt
+        where uv >nul 2>&1
+        if errorlevel 1 (
+            echo [ERROR] Khong cai duoc slint. Thu: uv pip install --python .venv\Scripts\python.exe -r requirements-slint.txt
+            pause
+            exit /b 1
+        )
+        uv pip install --python ".venv\Scripts\python.exe" -r requirements-slint.txt
+        if errorlevel 1 (
+            echo [ERROR] Khong cai duoc slint. Xem requirements-slint.txt
+            pause
+            exit /b 1
+        )
+    )
+    ".venv\Scripts\python.exe" -c "import slint" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Slint chua import duoc sau khi cai.
         pause
         exit /b 1
     )

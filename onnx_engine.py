@@ -55,6 +55,50 @@ MIN_VOCODER_MEL_FRAMES = 1
 
 logger = logging.getLogger("zipvoice_onnx_gui")
 
+# Flow-matching ODE starts from Gaussian noise; unseeded draws cause rare noisy/wheezy
+# chunks. Use a fixed base seed (+ chunk index) for reproducible, stable synthesis.
+_DEFAULT_ODE_SEED = 42
+
+
+def _env_ode_seed_base() -> int:
+    raw = os.environ.get("ZIPVOICE_SEED", str(_DEFAULT_ODE_SEED)).strip()
+    try:
+        return int(raw, 0)
+    except ValueError:
+        logger.warning("Invalid ZIPVOICE_SEED=%r — using %d", raw, _DEFAULT_ODE_SEED)
+        return _DEFAULT_ODE_SEED
+
+
+def resolve_ode_seed(
+    *,
+    ode_seed: int | None = None,
+    use_fixed_seed: bool = True,
+    chunk_index: int | None = None,
+) -> tuple[int | None, str]:
+    """Return (seed, mode). seed=None means unseeded random per call."""
+    if use_fixed_seed:
+        base = int(ode_seed) if ode_seed is not None else _env_ode_seed_base()
+        if chunk_index is not None:
+            seed = int((base + chunk_index) & 0xFFFFFFFF)
+        else:
+            seed = int(base & 0xFFFFFFFF)
+        return seed, "fixed"
+    return None, "random"
+
+
+def format_ode_seed_log(
+    *,
+    ode_seed: int | None = None,
+    use_fixed_seed: bool = True,
+    same_seed_all_chunks: bool = False,
+) -> str:
+    if use_fixed_seed:
+        base = int(ode_seed) if ode_seed is not None else _env_ode_seed_base()
+        if same_seed_all_chunks:
+            return f"ode_seed={base} (fixed, same every chunk)"
+        return f"ode_seed={base} (fixed, +chunk_index)"
+    return "ode_seed=random"
+
 
 def _get_time_steps(
     t_start: float = 0.0,
@@ -156,6 +200,10 @@ def onnx_sample(
     t_shift: float = 0.5,
     guidance_scale: float = 1.0,
     num_step: int = 16,
+    *,
+    ode_seed: int | None = None,
+    use_fixed_seed: bool = True,
+    chunk_index: int | None = None,
 ) -> np.ndarray:
     assert len(tokens) == len(prompt_tokens) == 1
     tokens_np = np.array(tokens, dtype=np.int64)
@@ -173,7 +221,26 @@ def onnx_sample(
     feat_dim = model.feat_dim
 
     timesteps = _get_time_steps(0.0, 1.0, num_step, t_shift)
-    rng = np.random.default_rng()
+    seed, seed_mode = resolve_ode_seed(
+        ode_seed=ode_seed,
+        use_fixed_seed=use_fixed_seed,
+        chunk_index=chunk_index,
+    )
+    if seed is None:
+        rng = np.random.default_rng()
+        logger.debug(
+            "onnx_sample ode_seed=random (%s, mel_frames=%d)",
+            seed_mode,
+            num_frames,
+        )
+    else:
+        rng = np.random.default_rng(seed)
+        logger.debug(
+            "onnx_sample ode_seed=%d (%s, mel_frames=%d)",
+            seed,
+            seed_mode,
+            num_frames,
+        )
     x = rng.standard_normal((batch_size, num_frames, feat_dim), dtype=np.float32)
 
     pad_frames = num_frames - prompt_features.shape[1]
@@ -349,7 +416,12 @@ class OnnxTTSEngine:
         num_step: int = 16,
         guidance_scale: float = 1.0,
         t_shift: float = 0.5,
-    ) -> np.ndarray:
+        *,
+        ode_seed: int | None = None,
+        use_fixed_seed: bool = True,
+        chunk_index: int | None = None,
+        return_mel_frames: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, int]:
         logger.info("ONNX generate chunk (%d chars)...", len(text))
 
         tokens = self.tokenizer.texts_to_token_ids([text])
@@ -374,6 +446,9 @@ class OnnxTTSEngine:
             t_shift=t_shift,
             guidance_scale=guidance_scale,
             num_step=num_step,
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
+            chunk_index=chunk_index,
         )
 
         mel_frames = int(pred_features.shape[1]) if pred_features.ndim == 3 else 0
@@ -383,7 +458,10 @@ class OnnxTTSEngine:
                 mel_frames,
                 len(text),
             )
-            return np.array([], dtype=np.float32)
+            empty = np.array([], dtype=np.float32)
+            if return_mel_frames:
+                return empty, mel_frames
+            return empty
 
         # (B, T, C) -> (B, C, T) for Vocos
         mel = np.transpose(pred_features, (0, 2, 1)) / FEAT_SCALE
@@ -394,4 +472,7 @@ class OnnxTTSEngine:
 
         if is_force_cpu():
             gc.collect()
-        return wav.astype(np.float32)
+        wav = wav.astype(np.float32)
+        if return_mel_frames:
+            return wav, mel_frames
+        return wav

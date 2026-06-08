@@ -15,22 +15,24 @@ from onnx_providers import predict_runtime_device_summary
 from onnx_quant import QUANT_MODE_CHOICES
 from status_log import StatusLog
 from tts_pipeline import TTSRequest, TTSResult, TTSError, preview_normalize_text, run_tts_pipeline
-from utils import (
-    AUDIOBOOK_PRESET_PIPELINE,
-    DEFAULT_NORMALIZE_PIPELINE,
-    INPUT_MODE_CHOICES,
-    NORMALIZE_ADD_CHOICES,
+from text.chunking import (
     PAUSE_CHAPTER_DEFAULT,
     PAUSE_ENUM_DEFAULT,
     PAUSE_FORCED_SPLIT_DEFAULT,
     PAUSE_PARAGRAPH_DEFAULT,
     PAUSE_SENTENCE_DEFAULT,
+)
+from text.normalizers import (
+    AUDIOBOOK_PRESET_PIPELINE,
+    DEFAULT_NORMALIZE_PIPELINE,
+    NORMALIZE_ADD_CHOICES,
     build_normalize_pipeline,
     format_normalize_pipeline_list,
     pipeline_add_step,
     pipeline_move,
     pipeline_remove_at,
 )
+from text.pipeline import INPUT_MODE_CHOICES
 
 logger = logging.getLogger("zipvoice_slint_gui")
 
@@ -159,6 +161,8 @@ class TTSController:
             gen_txt_source_path=gen_src,
             parallel_workers=s.parallel_workers,
             use_onnx_gpu=s.use_onnx_gpu,
+            ode_seed=42,
+            use_fixed_seed=True,
         )
 
     @property
@@ -239,7 +243,7 @@ class TTSController:
         return list(NORMALIZE_ADD_CHOICES.keys())
 
     def load_gen_text_file(self, path: str) -> tuple[str, str]:
-        from utils import read_text_file
+        from text.io import read_text_file
 
         text = read_text_file(path)
         self.state.gen_text = text

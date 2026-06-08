@@ -13,17 +13,19 @@ from typing import Any
 from assets_loader import MANUAL_CHOICE
 from config import ROOT
 from export_audio import EXPORT_CHOICES
-from utils import (
-    AUDIOBOOK_PRESET_PIPELINE,
-    DEFAULT_NORMALIZE_PIPELINE,
+from text.chunking import (
     PAUSE_CHAPTER_DEFAULT,
     PAUSE_ENUM_DEFAULT,
     PAUSE_FORCED_SPLIT_DEFAULT,
     PAUSE_PARAGRAPH_DEFAULT,
     PAUSE_SENTENCE_DEFAULT,
+)
+from text.normalizers import (
+    AUDIOBOOK_PRESET_PIPELINE,
+    DEFAULT_NORMALIZE_PIPELINE,
     build_normalize_pipeline,
-    pipeline_selector_choices,
     format_normalize_pipeline_list,
+    pipeline_selector_choices,
 )
 
 PRESETS_DIR = ROOT / "profiles"
@@ -51,6 +53,7 @@ class PresetConfig:
     ref_text: str = ""
     pipeline: list[str] = field(default_factory=lambda: list(DEFAULT_NORMALIZE_PIPELINE))
     chunk_max_chars: int = 135
+    chunk_min_chars: int = 70
     pause_sentence: float = PAUSE_SENTENCE_DEFAULT
     pause_paragraph: float = PAUSE_PARAGRAPH_DEFAULT
     pause_chapter: float = PAUSE_CHAPTER_DEFAULT
@@ -115,6 +118,9 @@ def validate_preset(data: dict[str, Any]) -> list[str]:
     chunk = data.get("chunk_max_chars")
     if chunk is not None and (not isinstance(chunk, (int, float)) or chunk < 1):
         errors.append("chunk_max_chars must be a positive number")
+    chunk_min = data.get("chunk_min_chars")
+    if chunk_min is not None and (not isinstance(chunk_min, (int, float)) or chunk_min < 1):
+        errors.append("chunk_min_chars must be a positive number")
 
     pause = data.get("pause") or {}
     for key in ("sentence", "paragraph", "chapter", "enum_item", "forced_split"):
@@ -197,6 +203,7 @@ def _preset_from_dict(data: dict[str, Any]) -> PresetConfig:
         ref_text=ref_text,
         pipeline=pipeline,
         chunk_max_chars=int(data.get("chunk_max_chars", 135)),
+        chunk_min_chars=int(data.get("chunk_min_chars", 70)),
         pause_sentence=float(pause.get("sentence", PAUSE_SENTENCE_DEFAULT)),
         pause_paragraph=float(pause.get("paragraph", PAUSE_PARAGRAPH_DEFAULT)),
         pause_chapter=float(pause.get("chapter", PAUSE_CHAPTER_DEFAULT)),
@@ -234,6 +241,7 @@ def preset_to_dict(preset: PresetConfig) -> dict[str, Any]:
         "voice_manual": voice_manual,
         "pipeline": list(preset.pipeline),
         "chunk_max_chars": int(preset.chunk_max_chars),
+        "chunk_min_chars": int(preset.chunk_min_chars),
         "pause": {
             "sentence": preset.pause_sentence,
             "paragraph": preset.pause_paragraph,
@@ -305,6 +313,7 @@ def preset_from_gui_state(
     ref_text: str,
     norm_pipeline: list[str] | None,
     chunk_max_chars: int,
+    chunk_min_chars: int,
     pause_sentence: float,
     pause_paragraph: float,
     pause_chapter: float,
@@ -329,6 +338,7 @@ def preset_from_gui_state(
         ref_text=ref_text,
         norm_pipeline=norm_pipeline,
         chunk_max_chars=chunk_max_chars,
+        chunk_min_chars=chunk_min_chars,
         pause_sentence=pause_sentence,
         pause_paragraph=pause_paragraph,
         pause_chapter=pause_chapter,
@@ -355,6 +365,7 @@ def collect_gui_state(
     ref_text: str,
     norm_pipeline: list[str] | None,
     chunk_max_chars: int,
+    chunk_min_chars: int,
     pause_sentence: float,
     pause_paragraph: float,
     pause_chapter: float,
@@ -386,6 +397,7 @@ def collect_gui_state(
             ref_text=ref_text or "",
             pipeline=pipeline,
             chunk_max_chars=int(chunk_max_chars),
+            chunk_min_chars=int(chunk_min_chars),
             pause_sentence=float(pause_sentence),
             pause_paragraph=float(pause_paragraph),
             pause_chapter=float(pause_chapter),
@@ -411,6 +423,7 @@ def collect_gui_state(
         ref_text="",
         pipeline=pipeline,
         chunk_max_chars=int(chunk_max_chars),
+        chunk_min_chars=int(chunk_min_chars),
         pause_sentence=float(pause_sentence),
         pause_paragraph=float(pause_paragraph),
         pause_chapter=float(pause_chapter),
@@ -460,6 +473,7 @@ def apply_preset_to_gui(preset: PresetConfig) -> dict[str, Any]:
         "norm_pipeline_display": format_normalize_pipeline_list(pipeline),
         "norm_sel_step": gr.update(choices=sel_choices, value=sel_value),
         "chunk_max_chars": gr.update(value=int(preset.chunk_max_chars)),
+        "chunk_min_chars": gr.update(value=int(preset.chunk_min_chars)),
         "pause_sentence": gr.update(value=float(preset.pause_sentence)),
         "pause_paragraph": gr.update(value=float(preset.pause_paragraph)),
         "pause_chapter": gr.update(value=float(preset.pause_chapter)),

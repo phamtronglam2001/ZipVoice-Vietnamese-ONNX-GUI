@@ -1,7 +1,10 @@
 """
-Chuẩn hóa cấu trúc câu cho TTS:
-- Ngoặc () [] {} → dấu phẩy (ngắt hơi): "mẫu (mẹ)" → "mẫu, mẹ"
+Chuẩn hóa cấu trúc câu cho TTS (bước text trước split_text_for_tts):
+- Ngoặc () [] {} → xuống dòng (ngắt hơi): "mẫu (mẹ)" → "mẫu\nmẹ"
 - Số/chữ + chấm + space → xuống dòng: "một. đọc" → "một.\nđọc"
+
+Đây là ranh giới đoạn/cụm trên văn bản — không phải gộp micro-chunk (\\n trong
+_merge_tiny_chunks khi đoạn quá ngắn so với min_chars).
 """
 from __future__ import annotations
 
@@ -25,29 +28,24 @@ RE_ENUM_ONLY_LINE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-# (mẹ) [x] {y} — không hỗ trợ ngoặc lồng nhau
-_RE_BRACKET_GROUP = re.compile(
-    r"[\(\[\{]\s*([^\(\)\[\]\{\}]+?)\s*[\)\]\}]",
-    re.UNICODE,
-)
+_RE_BRACKET = re.compile(r"[\(\)\[\]\{\}]")
+_RE_SPACES_AROUND_NL = re.compile(r"[ \t]*\n[ \t]*")
+_RE_MULTI_NL = re.compile(r"\n{2,}")
 
 
-def parentheses_to_commas(text: str) -> str:
+def brackets_to_newlines(text: str) -> str:
     """
-    Thay nội dung trong ngoặc bằng cụm sau dấu phẩy.
-    "mẫu (mẹ)" → "mẫu, mẹ"
+    Mỗi ký tự ngoặc () [] {} → xuống dòng (tương đương nghỉ ngắn trong cùng cụm).
+    "mẫu (mẹ)" → "mẫu\nmẹ"
+
+    Text-level only — split_text_for_tts tách theo \\n; micro-merge (min_chars) là bước khác.
     """
     if not text or not text.strip():
         return text
 
-    def _repl(match: re.Match) -> str:
-        inner = match.group(1).strip()
-        return f", {inner}" if inner else ""
-
-    out = _RE_BRACKET_GROUP.sub(_repl, text)
-    out = re.sub(r",\s*,", ", ", out)
-    out = re.sub(r"\s+,", ",", out)
-    out = re.sub(r",\s+", ", ", out)
+    out = _RE_BRACKET.sub("\n", text)
+    out = _RE_SPACES_AROUND_NL.sub("\n", out)
+    out = _RE_MULTI_NL.sub("\n", out)
     return out.strip()
 
 
@@ -61,8 +59,8 @@ def insert_period_linebreaks(text: str) -> str:
 
 
 def prepare_tts_structure(text: str) -> str:
-    """Pipeline cấu trúc TTS: ngoặc → phẩy, rồi số+chấm → xuống dòng."""
-    out = parentheses_to_commas(text)
+    """Pipeline cấu trúc TTS: ngoặc → xuống dòng, rồi số+chấm → xuống dòng."""
+    out = brackets_to_newlines(text)
     return insert_period_linebreaks(out)
 
 

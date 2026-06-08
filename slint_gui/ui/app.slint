@@ -59,6 +59,7 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-device: "";
     in-out property <int> parallel-workers: 1;
     in-out property <int> parallel-workers-max: 8;
+    in-out property <string> workers-hint: "";
     in-out property <int> synth-num-step: 16;
     in-out property <float> synth-guidance-scale: 1.0;
     in-out property <float> synth-t-shift: 0.5;
@@ -79,9 +80,10 @@ export component MainWindow inherits Window {
             color: #1a1a2e;
         }
         Text {
-            text: "Inference ONNX Runtime + Vocos ONNX · Giọng mẫu: assets/ · Xuất: output/";
+            text: "Inference ONNX Runtime (ZipVoice) + Vocos ONNX (100 mel) + librosa ISTFT · assets/ · output/";
             font-size: 12px;
             color: #555;
+            wrap: word-wrap;
         }
 
         TabWidget {
@@ -313,9 +315,14 @@ export component MainWindow inherits Window {
                             }
                         }
                         Text {
-                            text: root.use-onnx-gpu
-                                ? "GPU: khuyến nghị 1 worker (mỗi worker tốn VRAM riêng)."
-                                : "CPU: có thể tăng workers để tổng hợp song song.";
+                            text: "Cần onnxruntime-gpu (CUDA) hoặc ORT DirectML. Env: ZIPVOICE_ONNX_GPU=1 (run_gpu.bat / run_slint_gui.bat khi .install_mode=gpu).";
+                            font-size: 11px;
+                            color: #666;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: root.workers-hint;
                             font-size: 11px;
                             color: #666;
                             wrap: word-wrap;

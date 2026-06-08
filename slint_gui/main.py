@@ -49,10 +49,12 @@ if not models_ready():
 
 try:
     import slint  # noqa: E402
+    from slint import ListModel  # noqa: E402
 except ImportError:
     print(
         "[ERROR] Slint chưa cài. Chạy:\n"
-        "  .venv\\Scripts\\pip install -r requirements-slint.txt\n"
+        "  .venv\\Scripts\\python.exe -m pip install -r requirements-slint.txt\n"
+        "  hoặc: run_slint_gui.bat\n"
     )
     sys.exit(1)
 
@@ -99,10 +101,10 @@ class MainWindow(components.MainWindow):
 
     def _sync_static_options(self) -> None:
         c = self.controller
-        self.export_format_options = c.export_format_labels()
-        self.quant_mode_options = c.quant_mode_labels()
-        self.norm_step_options = c.normalize_step_labels()
-        self.input_mode_options = c.input_mode_labels()
+        self.export_format_options = ListModel(c.export_format_labels())
+        self.quant_mode_options = ListModel(c.quant_mode_labels())
+        self.norm_step_options = ListModel(c.normalize_step_labels())
+        self.input_mode_options = ListModel(c.input_mode_labels())
         try:
             self.quant_mode_index = c.quant_mode_labels().index(c.state.onnx_quant_mode)
         except ValueError:
@@ -115,17 +117,29 @@ class MainWindow(components.MainWindow):
         self.use_onnx_gpu = c.state.use_onnx_gpu
         self._sync_parallel_workers_limits()
 
+    def _worker_hint(self, use_gpu: bool) -> str:
+        max_w = max_parallel_workers(use_gpu=use_gpu)
+        if use_gpu:
+            return (
+                f"GPU: khuyến nghị 1 worker (tuần tự). Tối đa {max_w} — "
+                "mỗi worker load ONNX riêng, tốn VRAM. Env: ZIPVOICE_GPU_MAX_WORKERS."
+            )
+        return (
+            f"Mặc định 1 (tuần tự). CPU tối đa {max_w} workers. "
+            "Env: ZIPVOICE_CPU_MAX_WORKERS."
+        )
+
     def _sync_parallel_workers_limits(self) -> None:
         use_gpu = bool(self.use_onnx_gpu) and not is_force_cpu()
-        max_w = max_parallel_workers(use_gpu=use_gpu)
         self.parallel_workers_max = ui_parallel_workers_max(use_gpu=use_gpu)
         self.parallel_workers = clamp_parallel_workers(
             int(self.parallel_workers), use_gpu=use_gpu
         )
+        self.workers_hint = self._worker_hint(use_gpu)
 
     def _sync_voices(self) -> None:
         _choices, info = self.controller.refresh_voices()
-        self.voice_options = self.controller.voice_labels()
+        self.voice_options = ListModel(self.controller.voice_labels())
         self.asset_info = info
         self.voice_index = 0
         self.controller.state.voice_id = MANUAL_CHOICE
@@ -153,7 +167,11 @@ class MainWindow(components.MainWindow):
         s.pause_enum_item = float(self.pause_enum)
         s.pause_forced = float(self.pause_forced)
         s.use_onnx_gpu = bool(self.use_onnx_gpu)
-        s.parallel_workers = int(self.parallel_workers)
+        use_gpu = s.use_onnx_gpu and not is_force_cpu()
+        s.parallel_workers = clamp_parallel_workers(
+            int(self.parallel_workers), use_gpu=use_gpu
+        )
+        self.parallel_workers = s.parallel_workers
         s.synth_num_step = int(self.synth_num_step)
         s.synth_guidance_scale = float(self.synth_guidance_scale)
         s.synth_t_shift = float(self.synth_t_shift)

@@ -16,12 +16,9 @@ import numpy as np
 
 from config import cpu_max_parallel_workers, gpu_max_parallel_workers, is_force_cpu
 from status_log import StatusLog
-from utils import (
-    TtsChunk,
-    prepare_for_tts,
-    prepare_tts_text,
-    preprocess_ref_audio_text,
-)
+from audio.ref_audio import preprocess_ref_audio_text
+from text.chunking import TtsChunk
+from text.pipeline import prepare_for_tts, prepare_tts_text
 
 logger = logging.getLogger("zipvoice_onnx_gui")
 
@@ -86,6 +83,8 @@ def _worker_synthesize_chunk(task: tuple) -> tuple[int, np.ndarray, str | None]:
         num_step,
         guidance_scale,
         t_shift,
+        ode_seed,
+        use_fixed_seed,
     ) = task
     try:
         wav = _worker_engine.generate(
@@ -96,6 +95,9 @@ def _worker_synthesize_chunk(task: tuple) -> tuple[int, np.ndarray, str | None]:
             num_step=int(num_step),
             guidance_scale=float(guidance_scale),
             t_shift=float(t_shift),
+            ode_seed=int(ode_seed),
+            use_fixed_seed=bool(use_fixed_seed),
+            chunk_index=index,
         )
         return index, wav, None
     except Exception as exc:
@@ -139,6 +141,8 @@ def synthesize_tts_chunks(
     onnx_quant_mode: str,
     parallel_workers: int,
     use_onnx_gpu: bool = False,
+    ode_seed: int = 42,
+    use_fixed_seed: bool = True,
     progress: ProgressFn | None = None,
     status_log: StatusLog | None = None,
 ) -> ChunkSynthResult:
@@ -239,6 +243,8 @@ def synthesize_tts_chunks(
             t_shift=t_shift,
             onnx_quant_mode=onnx_quant_mode,
             use_onnx_gpu=use_gpu,
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
             workers=workers,
             total=total,
             progress=progress,
@@ -264,6 +270,8 @@ def synthesize_tts_chunks(
             guidance_scale=guidance_scale,
             t_shift=t_shift,
             engine=engine,
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
             total=total,
             progress=progress,
             status_log=status_log,
@@ -305,6 +313,8 @@ def _run_sequential(
     guidance_scale: float,
     t_shift: float,
     engine,
+    ode_seed: int,
+    use_fixed_seed: bool,
     total: int,
     progress: ProgressFn,
     status_log: StatusLog | None = None,
@@ -327,6 +337,9 @@ def _run_sequential(
             num_step=int(num_step),
             guidance_scale=float(guidance_scale),
             t_shift=float(t_shift),
+            ode_seed=ode_seed,
+            use_fixed_seed=use_fixed_seed,
+            chunk_index=i,
         )
         if wav.size == 0:
             msg = (
@@ -364,6 +377,8 @@ def _run_parallel(
     t_shift: float,
     onnx_quant_mode: str,
     use_onnx_gpu: bool,
+    ode_seed: int,
+    use_fixed_seed: bool,
     workers: int,
     total: int,
     progress: ProgressFn,
@@ -380,6 +395,8 @@ def _run_parallel(
             num_step,
             guidance_scale,
             t_shift,
+            ode_seed,
+            use_fixed_seed,
         )
         for i, normalized in pending
     ]

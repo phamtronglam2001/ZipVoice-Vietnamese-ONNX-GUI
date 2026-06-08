@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import traceback
 from collections.abc import Iterator
 
@@ -55,24 +56,36 @@ if not models_ready():
         )
     sys.exit(1)
 
+from chunk_export import (  # noqa: E402
+    CHUNK_EXPORT_DIR,
+    ChunkExportConfig,
+    export_chunks_to_dir,
+    format_chunk_export_status,
+)
 from chunk_synthesis import max_parallel_workers, ui_parallel_workers_max  # noqa: E402
 from onnx_providers import predict_runtime_device_summary  # noqa: E402
+from onnx_quant import normalize_quant_mode  # noqa: E402
 from tts_pipeline import (  # noqa: E402
     TTSProgress,
     TTSRequest,
     TTSResult,
     TTSError,
     iter_tts_pipeline,
+    resolve_gen_text_for_pipeline,
+    resolve_ref_path,
 )
-from utils import (  # noqa: E402
-    AUDIOBOOK_PRESET_PIPELINE,
-    DEFAULT_NORMALIZE_PIPELINE,
-    NORMALIZE_ADD_CHOICES,
+from text.chunking import (  # noqa: E402
     PAUSE_CHAPTER_DEFAULT,
     PAUSE_ENUM_DEFAULT,
     PAUSE_FORCED_SPLIT_DEFAULT,
     PAUSE_PARAGRAPH_DEFAULT,
     PAUSE_SENTENCE_DEFAULT,
+)
+from text.io import read_text_file  # noqa: E402
+from text.normalizers import (  # noqa: E402
+    AUDIOBOOK_PRESET_PIPELINE,
+    DEFAULT_NORMALIZE_PIPELINE,
+    NORMALIZE_ADD_CHOICES,
     build_normalize_pipeline,
     format_normalize_pipeline_list,
     pipeline_add_step,
@@ -80,11 +93,12 @@ from utils import (  # noqa: E402
     pipeline_remove_at,
     pipeline_selector_choices,
     _parse_pipeline_index,
+)
+from text.pipeline import (  # noqa: E402
     INPUT_MODE_CHOICES,
     export_normalized_text_file,
     parse_input_mode,
     preview_normalize_output,
-    read_text_file,
 )
 
 # Gradio textarea may corrupt Unicode/line breaks — CSS fixes display only.
@@ -253,6 +267,7 @@ def _on_load_preset(preset_name: str | None):
         updates["norm_pipeline_state"],
         updates["norm_pipeline_display"],
         updates["norm_sel_step"],
+        updates["chunk_min_chars"],
         updates["chunk_max_chars"],
         updates["pause_sentence"],
         updates["pause_paragraph"],
@@ -278,6 +293,7 @@ def _on_save_preset(
     ref_audio_path: str | None,
     ref_text: str,
     norm_pipeline: list[str] | None,
+    chunk_min_chars: int,
     chunk_max_chars: int,
     pause_sentence: float,
     pause_paragraph: float,
@@ -302,6 +318,7 @@ def _on_save_preset(
         ref_text=ref_text,
         norm_pipeline=norm_pipeline,
         chunk_max_chars=chunk_max_chars,
+        chunk_min_chars=chunk_min_chars,
         pause_sentence=pause_sentence,
         pause_paragraph=pause_paragraph,
         pause_chapter=pause_chapter,
@@ -333,6 +350,7 @@ def preview_normalize(
     gen_text: str,
     gen_txt_source_path: str | None,
     norm_pipeline: list[str] | None,
+    chunk_min_chars: int,
     chunk_max_chars: int,
     input_mode: str,
 ) -> str:
@@ -342,6 +360,7 @@ def preview_normalize(
             source_text,
             norm_pipeline,
             chunk_max_chars=int(chunk_max_chars),
+            chunk_min_chars=int(chunk_min_chars),
             mode=parse_input_mode(input_mode),
         )
     except ValueError as exc:
@@ -436,6 +455,7 @@ def infer_tts(
     speed: float,
     export_format: str,
     norm_pipeline: list[str] | None,
+    chunk_min_chars: int,
     chunk_max_chars: int,
     pause_sentence: float,
     pause_paragraph: float,
@@ -450,6 +470,8 @@ def infer_tts(
     gen_txt_source_path: str | None,
     parallel_workers: int = 1,
     use_onnx_gpu: bool = False,
+    ode_seed: int = 42,
+    use_fixed_seed: bool = True,
     progress=gr.Progress(),
 ) -> Iterator[tuple[str | None, str | None, str, str, str, str]]:
     log = StatusLog()
@@ -466,6 +488,7 @@ def infer_tts(
         export_format=export_format,
         norm_pipeline=norm_pipeline,
         chunk_max_chars=int(chunk_max_chars),
+        chunk_min_chars=int(chunk_min_chars),
         pause_sentence=float(pause_sentence),
         pause_paragraph=float(pause_paragraph),
         pause_chapter=float(pause_chapter),
@@ -479,6 +502,8 @@ def infer_tts(
         gen_txt_source_path=gen_txt_source_path,
         parallel_workers=int(parallel_workers),
         use_onnx_gpu=bool(use_onnx_gpu),
+        ode_seed=int(ode_seed),
+        use_fixed_seed=bool(use_fixed_seed),
     )
 
     def prog(frac, desc=None):
@@ -526,6 +551,109 @@ def infer_tts(
         log.error(str(exc))
         logger.error("infer_tts failed:\n%s", traceback.format_exc())
         raise gr.Error(f"Lỗi: {exc}\nChi tiết: logs/app.log") from exc
+
+
+def export_chunk_wavs_debug(
+    asset_voice_id: str,
+    ref_audio_path: str | None,
+    ref_text: str,
+    gen_text: str,
+    speed: float,
+    norm_pipeline: list[str] | None,
+    chunk_min_chars: int,
+    chunk_max_chars: int,
+    pause_sentence: float,
+    pause_paragraph: float,
+    pause_chapter: float,
+    pause_enum_item: float,
+    pause_forced: float,
+    onnx_quant_mode: str,
+    synth_num_step: int,
+    synth_guidance_scale: float,
+    synth_t_shift: float,
+    input_mode: str,
+    gen_txt_source_path: str | None,
+    use_onnx_gpu: bool = False,
+    ode_seed: int = 42,
+    use_fixed_seed: bool = True,
+    same_seed_all_chunks: bool = False,
+    progress=gr.Progress(),
+) -> str:
+    """Debug-only: synthesize each chunk to separate WAVs under output/chunk_test/."""
+    use_gpu = bool(use_onnx_gpu) and not is_force_cpu()
+    quant_mode = normalize_quant_mode(onnx_quant_mode)
+    norm_pipeline = build_normalize_pipeline(norm_pipeline)
+
+    ref_path = resolve_ref_path(ref_audio_path, asset_voice_id, _voice_cache)
+    if not ref_path:
+        raise gr.Error("Chọn giọng từ menu assets/ hoặc upload file giọng mẫu.")
+
+    resolved_gen = resolve_gen_text_for_pipeline(gen_text, gen_txt_source_path)
+    if not resolved_gen.strip():
+        raise gr.Error("Vui lòng nhập văn bản cần đọc (ô số 3).")
+
+    resolved_ref_text = ref_text.strip()
+    if not resolved_ref_text:
+        voice = get_voice_by_id(asset_voice_id, _voice_cache)
+        if voice and voice.transcript.strip():
+            resolved_ref_text = voice.transcript
+    if not resolved_ref_text:
+        raise gr.Error("Bắt buộc nhập transcript giọng mẫu (ô số 2).")
+
+    config = ChunkExportConfig(
+        norm_pipeline=norm_pipeline,
+        input_mode=input_mode,
+        chunk_max_chars=int(chunk_max_chars),
+        chunk_min_chars=int(chunk_min_chars),
+        pause_sentence=float(pause_sentence),
+        pause_paragraph=float(pause_paragraph),
+        pause_chapter=float(pause_chapter),
+        pause_enum_item=float(pause_enum_item),
+        pause_forced=float(pause_forced),
+        speed=float(speed),
+        synth_num_step=int(synth_num_step),
+        synth_guidance_scale=float(synth_guidance_scale),
+        synth_t_shift=float(synth_t_shift),
+        quant_mode=quant_mode,
+        use_gpu=use_gpu,
+        ode_seed=int(ode_seed),
+        use_fixed_seed=bool(use_fixed_seed),
+        same_seed_all_chunks=bool(same_seed_all_chunks),
+    )
+
+    try:
+        result = export_chunks_to_dir(
+            gen_text=resolved_gen,
+            ref_audio_path=ref_path,
+            ref_text=resolved_ref_text,
+            out_dir=CHUNK_EXPORT_DIR,
+            config=config,
+            voice_id=asset_voice_id or "",
+            input_label=gen_txt_source_path or "(gui text)",
+            profile_label="gui",
+            progress=lambda frac, desc: progress(frac, desc=desc),
+        )
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+
+    logger.info(
+        "export_chunk_wavs_debug | voice=%s | chunks=%d | quant=%s | dir=%s | ode_seed=%s fixed=%s same=%s",
+        asset_voice_id,
+        len(result.saved_wavs),
+        quant_mode,
+        result.out_dir,
+        ode_seed,
+        use_fixed_seed,
+        same_seed_all_chunks,
+    )
+    return format_chunk_export_status(
+        result,
+        quant_mode=quant_mode,
+        use_gpu=use_gpu,
+        ode_seed=int(ode_seed),
+        use_fixed_seed=bool(use_fixed_seed),
+        same_seed_all_chunks=bool(same_seed_all_chunks),
+    )
 
 
 def build_ui() -> gr.Blocks:
@@ -680,14 +808,27 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 norm_pipeline_display = gr.Markdown(
                     value=format_normalize_pipeline_list([])
                 )
-            chunk_max_chars = gr.Slider(
-                80,
-                220,
-                value=135,
-                step=5,
-                label="Max ký tự / chunk",
-                info="ZipVoice ~100 token/chunk. Giảm nếu OOM; tăng nhẹ cho đoạn ngắn.",
-            )
+            with gr.Row():
+                chunk_min_chars = gr.Slider(
+                    12,
+                    150,
+                    value=70,
+                    step=5,
+                    label="Min ký tự / chunk",
+                    info=(
+                        "Gộp micro-chunk (< ngưỡng) vào chunk liền kề trước synthesize — "
+                        "nối bằng xuống dòng trong text, không phải nghỉ giữa chunk thường. "
+                        "Tránh mel yếu / lạc giọng. Mặc định 70."
+                    ),
+                )
+                chunk_max_chars = gr.Slider(
+                    80,
+                    220,
+                    value=135,
+                    step=5,
+                    label="Max ký tự / chunk",
+                    info="ZipVoice ~100 token/chunk. Giảm nếu OOM; tăng nhẹ cho đoạn ngắn.",
+                )
         with gr.Accordion("Tinh chỉnh nghỉ (audiobook)", open=False):
             with gr.Row():
                 pause_sentence = gr.Slider(
@@ -776,7 +917,11 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             placeholder="Cấu hình pipeline → nhập văn bản ô 3 → Xem trước hoặc Xuất .txt",
         )
 
-        btn = gr.Button("Tổng hợp giọng nói (ONNX)", variant="primary")
+        with gr.Row():
+            btn = gr.Button(
+                "Tổng hợp giọng nói (ONNX)",
+                variant="primary",
+            )
         save_status = gr.Markdown("")
         status_log_box = gr.Textbox(
             label="Nhật ký trạng thái (debug)",
@@ -786,6 +931,40 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
             elem_classes=[TEXTBOX_UNICODE_CLASS],
             placeholder="Nhấn Tổng hợp để xem từng bước: đầu vào, chuẩn hóa, chunk, ONNX, tổng hợp...",
         )
+
+        with gr.Accordion("Debug — công cụ phát triển", open=True):
+            with gr.Row():
+                ode_seed_input = gr.Number(
+                    label="ODE seed",
+                    value=42,
+                    precision=0,
+                    minimum=0,
+                    maximum=2**31 - 1,
+                    scale=1,
+                    info="Seed cơ sở ODE. Mặc định mỗi chunk = base + chỉ số (0-based).",
+                )
+                use_fixed_seed_cb = gr.Checkbox(
+                    label="Cố định seed ODE",
+                    value=True,
+                    scale=1,
+                    info="Bật: seed cố định (ổn định). Tắt: random mỗi chunk (hành vi cũ, có thể gây artifact).",
+                )
+                same_seed_all_chunks_cb = gr.Checkbox(
+                    label="Cùng seed mọi chunk",
+                    value=False,
+                    scale=1,
+                    info="Debug: mọi chunk dùng đúng ODE seed (không + chỉ số). So sánh drift int4.",
+                )
+            export_chunks_btn = gr.Button(
+                "Export từng chunk WAV (debug)",
+                size="sm",
+                variant="secondary",
+            )
+            export_chunks_status = gr.Markdown(
+                "Xuất mỗi chunk thành WAV riêng vào `output/chunk_test/` "
+                "(dùng giọng, văn bản ô 3, pipeline, quant và GPU hiện tại). "
+                "Kết quả: `chunk_NNN.wav` + `manifest.txt`. Chỉ Gradio."
+            )
 
         with gr.Row():
             output_file = gr.File(label="Tải file output/", type="filepath")
@@ -851,6 +1030,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 ref_audio,
                 ref_text,
                 norm_pipeline_state,
+                chunk_min_chars,
                 chunk_max_chars,
                 pause_sentence,
                 pause_paragraph,
@@ -880,6 +1060,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 norm_pipeline_state,
                 norm_pipeline_display,
                 norm_sel_step,
+                chunk_min_chars,
                 chunk_max_chars,
                 pause_sentence,
                 pause_paragraph,
@@ -906,6 +1087,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 ref_audio,
                 ref_text,
                 norm_pipeline_state,
+                chunk_min_chars,
                 chunk_max_chars,
                 pause_sentence,
                 pause_paragraph,
@@ -930,6 +1112,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 gen_text,
                 gen_txt_source_path,
                 norm_pipeline_state,
+                chunk_min_chars,
                 chunk_max_chars,
                 input_mode,
             ],
@@ -957,6 +1140,7 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 speed,
                 export_format,
                 norm_pipeline_state,
+                chunk_min_chars,
                 chunk_max_chars,
                 pause_sentence,
                 pause_paragraph,
@@ -971,8 +1155,40 @@ Giọng mẫu từ `assets/` · File xuất lưu vào `output/`
                 gen_txt_source_path,
                 parallel_workers,
                 use_onnx_gpu,
+                ode_seed_input,
+                use_fixed_seed_cb,
             ],
             outputs=[output_file, output_audio, save_status, norm_preview, status_log_box, runtime_device_display],
+            concurrency_limit=1,
+        )
+        export_chunks_btn.click(
+            export_chunk_wavs_debug,
+            inputs=[
+                voice_dropdown,
+                ref_audio,
+                ref_text,
+                gen_text,
+                speed,
+                norm_pipeline_state,
+                chunk_min_chars,
+                chunk_max_chars,
+                pause_sentence,
+                pause_paragraph,
+                pause_chapter,
+                pause_enum_item,
+                pause_forced,
+                onnx_quant_mode,
+                synth_num_step,
+                synth_guidance_scale,
+                synth_t_shift,
+                input_mode,
+                gen_txt_source_path,
+                use_onnx_gpu,
+                ode_seed_input,
+                use_fixed_seed_cb,
+                same_seed_all_chunks_cb,
+            ],
+            outputs=[export_chunks_status],
             concurrency_limit=1,
         )
 
