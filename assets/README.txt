@@ -46,6 +46,10 @@ Giọng mẫu được load theo HAI kiểu (gộp trong menu GUI):
 
    Đã kèm sẵn 30 giọng (ví dụ Bá-Vinh.mp3 + Bá-Vinh.txt).
 
+   Nguồn: thư mục audio/ của ViZipVoice trên Hugging Face
+     https://huggingface.co/contextboxai/ViZipvoice
+     (Apache-2.0 — credit ZipVoice gốc + tác giả ViZipVoice)
+
    Định dạng audio: .wav, .mp3, .flac, .ogg, .m4a, .opus, .aac
 
    ID trong app: sample_audio__<tên file>

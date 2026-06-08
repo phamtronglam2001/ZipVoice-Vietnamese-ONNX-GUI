@@ -17,6 +17,7 @@ This folder contains neural network weights used for offline inference. **All we
 | Model config | `onnx/model.json` | From hynt checkpoint export | CC-BY-NC-SA-4.0 | **Yes** | Same as above |
 | Token table | `onnx/tokens.txt` | From hynt checkpoint / k2-fsa ZipVoice | CC-BY-NC-SA-4.0 | **Yes** | Same as above |
 | Vocos mel decoder (ONNX) | `vocoder/mel_spec_24khz.onnx` | User-bundled export from ZipVoice-Vietnamese-GUI (100 mel) · base weights [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) · architecture [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) | **MIT** (HF model cards & vocos code) | **Yes** | Include MIT copyright notice; cite Siuzdak et al. ([arXiv:2306.00814](https://arxiv.org/abs/2306.00814)) |
+| Reference audio (30 voices) | `assets/sample_audio/*` | [contextboxai/ViZipvoice](https://huggingface.co/contextboxai/ViZipvoice) `audio/` (mp3 + sidecar `.txt`) | **Apache-2.0** | **Yes** | Credit ViZipVoice / [iamdinhthuan/ViZipvoice](https://github.com/iamdinhthuan/ViZipvoice) and original ZipVoice |
 
 ---
 
@@ -48,6 +49,12 @@ Redistribution is permitted with copyright and permission notice preserved. Comm
 ## Apache-2.0 (k2-fsa ZipVoice code)
 
 Inference scripts and architecture come from [k2-fsa/ZipVoice](https://github.com/k2-fsa/ZipVoice) (Apache-2.0). That license covers **code**, not the hynt fine-tuned **weights**, which remain CC-BY-NC-SA-4.0.
+
+---
+
+## Apache-2.0 (ViZipVoice reference audio)
+
+The 30 bundled reference prompts under `assets/sample_audio/` are copied from the `audio/` folder of [contextboxai/ViZipvoice](https://huggingface.co/contextboxai/ViZipvoice) (each `.mp3` with a same-stem `.txt` transcript). Licensed under **Apache-2.0** per the ViZipVoice model card; retain attribution to ViZipVoice and the original ZipVoice project when redistributing.
 
 ---
 

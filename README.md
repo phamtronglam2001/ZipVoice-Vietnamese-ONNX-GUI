@@ -103,6 +103,7 @@ Các hạng mục **chưa hoàn thành** — đừng coi là production-ready:
 |------------|-------|---------|
 | ZipVoice / ONNX stack | [k2-fsa/ZipVoice](https://github.com/k2-fsa/ZipVoice) | Apache-2.0 |
 | Checkpoint VI | [hynt/ZipVoice-Vietnamese-2500h](https://huggingface.co/hynt/ZipVoice-Vietnamese-2500h) | CC-BY-NC-SA-4.0 |
+| Giọng mẫu `sample_audio/` (30) | [contextboxai/ViZipvoice](https://huggingface.co/contextboxai/ViZipvoice) (`audio/` — mp3 + transcript) | Apache-2.0 |
 | Vocos | [gemelo-ai/vocos](https://github.com/gemelo-ai/vocos) · [charactr/vocos-mel-24khz](https://huggingface.co/charactr/vocos-mel-24khz) | MIT |
 | VieNeu text hygiene | [pnnbao97/VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) | theo repo gốc |
 | sea-g2p | [pnnbao97/sea-g2p](https://github.com/pnnbao97/sea-g2p) | theo repo gốc |
