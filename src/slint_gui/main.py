@@ -50,7 +50,6 @@ if not models_ready():
 
 try:
     import slint  # noqa: E402
-    from slint import ListModel  # noqa: E402
 except ImportError:
     print(
         "[ERROR] Slint chưa cài. Chạy:\n"
@@ -61,6 +60,7 @@ except ImportError:
 
 from assets_loader import MANUAL_CHOICE  # noqa: E402
 from slint_gui.backend.tts_controller import TTSController  # noqa: E402
+from slint_gui.slint_utils import bind_string_list_model, slint_int  # noqa: E402
 from slint_gui.theme_prefs import load_dark_mode, save_dark_mode  # noqa: E402
 from tts_pipeline import TTSResult, TTSError  # noqa: E402
 
@@ -111,10 +111,10 @@ class MainWindow(components.MainWindow):
 
     def _sync_static_options(self) -> None:
         c = self.controller
-        self.export_format_options = ListModel(c.export_format_labels())
-        self.quant_mode_options = ListModel(c.quant_mode_labels())
-        self.norm_step_options = ListModel(c.normalize_step_labels())
-        self.input_mode_options = ListModel(c.input_mode_labels())
+        bind_string_list_model(self, "export_format_options", c.export_format_labels())
+        bind_string_list_model(self, "quant_mode_options", c.quant_mode_labels())
+        bind_string_list_model(self, "norm_step_options", c.normalize_step_labels())
+        bind_string_list_model(self, "input_mode_options", c.input_mode_labels())
         try:
             self.quant_mode_index = c.quant_mode_labels().index(c.state.onnx_quant_mode)
         except ValueError:
@@ -149,7 +149,7 @@ class MainWindow(components.MainWindow):
 
     def _sync_voices(self) -> None:
         _choices, info = self.controller.refresh_voices()
-        self.voice_options = ListModel(self.controller.voice_labels())
+        bind_string_list_model(self, "voice_options", self.controller.voice_labels())
         self.asset_info = info
         self.voice_index = 0
         self.controller.state.voice_id = MANUAL_CHOICE
@@ -157,20 +157,23 @@ class MainWindow(components.MainWindow):
     def _pull_state_from_ui(self) -> None:
         s = self.controller.state
         ids = self.controller.voice_ids()
-        idx = min(max(0, self.voice_index), max(0, len(ids) - 1))
+        idx = min(max(0, slint_int(self.voice_index)), max(0, len(ids) - 1))
         s.voice_id = ids[idx] if ids else MANUAL_CHOICE
         s.ref_audio_path = self.ref_audio_path
         s.ref_text = self.ref_text
         s.gen_text = self.gen_text
         s.gen_txt_source_path = self.gen_txt_source_path
         mode_keys = self.controller.input_mode_keys()
-        s.input_mode = mode_keys[min(self.input_mode_index, len(mode_keys) - 1)]
+        mode_i = min(slint_int(self.input_mode_index), max(0, len(mode_keys) - 1))
+        s.input_mode = mode_keys[mode_i]
         s.speed = float(self.speed_value)
         exp = self.controller.export_format_labels()
-        s.export_format = exp[min(self.export_format_index, len(exp) - 1)]
+        exp_i = min(slint_int(self.export_format_index), max(0, len(exp) - 1))
+        s.export_format = exp[exp_i]
         quants = self.controller.quant_mode_labels()
-        s.onnx_quant_mode = quants[min(self.quant_mode_index, len(quants) - 1)]
-        s.chunk_max_chars = int(self.chunk_max_chars)
+        quant_i = min(slint_int(self.quant_mode_index), max(0, len(quants) - 1))
+        s.onnx_quant_mode = quants[quant_i]
+        s.chunk_max_chars = slint_int(self.chunk_max_chars, 135)
         s.pause_sentence = float(self.pause_sentence)
         s.pause_paragraph = float(self.pause_paragraph)
         s.pause_chapter = float(self.pause_chapter)
@@ -198,6 +201,7 @@ class MainWindow(components.MainWindow):
 
     @slint.callback
     def voice_changed(self, index: int) -> None:
+        index = slint_int(index)
         self.voice_index = index
         ids = self.controller.voice_ids()
         if not ids or index >= len(ids):
@@ -233,7 +237,9 @@ class MainWindow(components.MainWindow):
     @slint.callback
     def pipeline_add_clicked(self) -> None:
         keys = self.controller.normalize_step_keys()
-        idx = min(self.norm_step_index, len(keys) - 1)
+        if not keys:
+            return
+        idx = min(slint_int(self.norm_step_index), len(keys) - 1)
         try:
             self.pipeline_display = self.controller.pipeline_add(keys[idx])
         except ValueError as exc:
@@ -242,19 +248,19 @@ class MainWindow(components.MainWindow):
     @slint.callback
     def pipeline_remove_clicked(self) -> None:
         self.pipeline_display = self.controller.pipeline_remove(
-            int(self.pipeline_selected_index)
+            slint_int(self.pipeline_selected_index)
         )
 
     @slint.callback
     def pipeline_up_clicked(self) -> None:
         self.pipeline_display = self.controller.pipeline_move(
-            int(self.pipeline_selected_index), -1
+            slint_int(self.pipeline_selected_index), -1
         )
 
     @slint.callback
     def pipeline_down_clicked(self) -> None:
         self.pipeline_display = self.controller.pipeline_move(
-            int(self.pipeline_selected_index), 1
+            slint_int(self.pipeline_selected_index), 1
         )
 
     @slint.callback
