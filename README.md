@@ -122,19 +122,28 @@ run_gui.bat
 
 ![Gradio GUI](docs/screenshot.png)
 
-#### Reference voice
+Reference voice, input text, and synthesized output (click **play** to open the audio file on GitHub):
 
-<audio controls src="docs/demo/ref_voice.mp3"></audio>
-
-> **Transcript:** *Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.*
-
-#### Text to synthesize
-
-> Tiếng Việt là tiếng nói thiêng liêng và giàu đẹp của dân tộc Việt Nam. Vẻ đẹp của tiếng Việt trước hết thể hiện ở âm thanh giàu nhạc tính với những thanh điệu trầm bổng, khiến lời nói nghe như một khúc hát dịu dàng. Không chỉ đẹp, tiếng Việt còn rất giàu với vốn từ phong phú, có thể diễn đạt mọi cung bậc cảm xúc của con người. Những từ láy, từ tượng thanh, tượng hình làm cho lời văn trở nên sinh động và giàu hình ảnh. Qua thời gian, tiếng Việt ngày càng phát triển và khẳng định sức sống mạnh mẽ. Vì vậy, mỗi chúng ta cần yêu quý và giữ gìn sự trong sáng của tiếng mẹ đẻ.
-
-#### Output (TTS)
-
-<audio controls src="docs/demo/output.wav"></audio>
+<table>
+<tr>
+<td colspan="2"><h3>Bá-Vinh &nbsp;<code>sample_audio</code></h3></td>
+</tr>
+<tr>
+<td width="50%">
+<b>Reference</b>&ensp;<a href="docs/demo/ref_voice.mp3">play</a><br>
+<i>Chỉ số có thể là mức độ tin tưởng của công chúng vào thông tin được cung cấp.</i>
+</td>
+<td width="50%">
+<b>Text to synthesize</b><br>
+<i>Tiếng Việt là tiếng nói thiêng liêng và giàu đẹp của dân tộc Việt Nam. Vẻ đẹp của tiếng Việt trước hết thể hiện ở âm thanh giàu nhạc tính với những thanh điệu trầm bổng, khiến lời nói nghe như một khúc hát dịu dàng. Không chỉ đẹp, tiếng Việt còn rất giàu với vốn từ phong phú, có thể diễn đạt mọi cung bậc cảm xúc của con người. Những từ láy, từ tượng thanh, tượng hình làm cho lời văn trở nên sinh động và giàu hình ảnh. Qua thời gian, tiếng Việt ngày càng phát triển và khẳng định sức sống mạnh mẽ. Vì vậy, mỗi chúng ta cần yêu quý và giữ gìn sự trong sáng của tiếng mẹ đẻ.</i>
+</td>
+</tr>
+<tr>
+<td colspan="2">
+<b>Output (TTS)</b>&ensp;<a href="docs/demo/output.wav">play</a>
+</td>
+</tr>
+</table>
 
 > Regenerate demo assets: [`docs/demo/README.md`](docs/demo/README.md)
 
