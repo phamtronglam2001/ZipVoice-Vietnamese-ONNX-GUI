@@ -16,6 +16,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Literal, Optional
 
 import numpy as np
@@ -23,10 +24,8 @@ import onnxruntime as ort
 import soundfile as sf
 from scipy.signal import resample_poly
 
+import config
 from config import (
-    ONNX_DIR,
-    ONNX_MODEL_JSON,
-    ONNX_TOKENS,
     VOCODER_MEL_CHANNELS,
     VOCODER_ONNX,
     VOCODER_RUNTIME_LABEL,
@@ -488,6 +487,7 @@ def _decode_mel_batch(
 
 class OnnxTTSEngine:
     _instance: Optional["OnnxTTSEngine"] = None
+    _models_dir: Path | None = None
 
     def __init__(
         self,
@@ -507,14 +507,14 @@ class OnnxTTSEngine:
         te_name, fm_name = onnx_files(self.quant_mode, use_int8=use_int8)
         num_thread = onnx_num_threads()
 
-        with open(ONNX_MODEL_JSON, encoding="utf-8") as f:
+        with open(config.ONNX_MODEL_JSON, encoding="utf-8") as f:
             model_config = json.load(f)
 
-        self.tokenizer = EspeakTokenizer(token_file=str(ONNX_TOKENS), lang="vi")
+        self.tokenizer = EspeakTokenizer(token_file=str(config.ONNX_TOKENS), lang="vi")
         self.feature_extractor = VocosFbank()
         self.model = OnnxModel(
-            str(ONNX_DIR / te_name),
-            str(ONNX_DIR / fm_name),
+            str(config.ONNX_DIR / te_name),
+            str(config.ONNX_DIR / fm_name),
             num_thread=num_thread,
             use_gpu=self.use_gpu,
             quant_mode=self.quant_mode,
@@ -522,7 +522,7 @@ class OnnxTTSEngine:
         self.vocoder = _load_vocoder_onnx(use_gpu=self.use_gpu)
         self.sampling_rate = model_config["feature"]["sampling_rate"]
         self._prompt_state: PromptState | None = None
-        size_note = format_sizes(ONNX_DIR, (te_name, fm_name))
+        size_note = format_sizes(config.ONNX_DIR, (te_name, fm_name))
         provider_note = provider_status_message(self.use_gpu)
         logger.info(
             "OnnxTTSEngine ready | mode=%s | device=%s | %s | vocoder=%s",

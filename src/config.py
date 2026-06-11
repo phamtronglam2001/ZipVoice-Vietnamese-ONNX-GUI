@@ -22,12 +22,14 @@ REF_AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".aac"
 FFMPEG_BIN = ROOT / "ffmpeg" / "bin"
 SYSTEM_FFMPEG_BIN = Path(r"C:\ffmpeg\bin")
 
-MODELS_DIR = ROOT / "models"
-ONNX_DIR = MODELS_DIR / "onnx"
-VOCODER_DIR = MODELS_DIR / "vocoder"
+DEFAULT_MODELS_DIR = ROOT / "models"
 
-ONNX_MODEL_JSON = ONNX_DIR / "model.json"
-ONNX_TOKENS = ONNX_DIR / "tokens.txt"
+MODELS_DIR: Path = DEFAULT_MODELS_DIR
+ONNX_DIR: Path = MODELS_DIR / "onnx"
+VOCODER_DIR: Path = MODELS_DIR / "vocoder"
+
+ONNX_MODEL_JSON: Path = ONNX_DIR / "model.json"
+ONNX_TOKENS: Path = ONNX_DIR / "tokens.txt"
 
 # Vocoder ONNX: bundled local file only — export from ZipVoice-Vietnamese-GUI
 # (vocos_export.py → mel_spec_24khz.onnx, 100 mel, synced with ZipVoice feat_dim).
@@ -39,6 +41,49 @@ VOCODER_MEL_CHANNELS = 100
 VOCODER_RUNTIME_LABEL = "Vocos ONNX (100 mel) + librosa ISTFT"
 # Backward-compatible alias (attribution only — never auto-download).
 HF_VOCODER_REPO = HF_VOCODER_WEIGHTS_REPO
+
+
+def _sync_model_paths(models_dir: Path) -> None:
+    """Update module-level model paths (call after resolving a models root)."""
+    global MODELS_DIR, ONNX_DIR, VOCODER_DIR, ONNX_MODEL_JSON, ONNX_TOKENS, VOCODER_ONNX
+    resolved = models_dir.resolve()
+    MODELS_DIR = resolved
+    ONNX_DIR = resolved / "onnx"
+    VOCODER_DIR = resolved / "vocoder"
+    ONNX_MODEL_JSON = ONNX_DIR / "model.json"
+    ONNX_TOKENS = ONNX_DIR / "tokens.txt"
+    VOCODER_ONNX = VOCODER_DIR / VOCODER_ONNX_FILENAME
+
+
+def resolve_models_dir(path: str | Path | None = None) -> Path:
+    """Resolve models root: relative paths are under project ROOT; empty → ./models/."""
+    if path is None:
+        return DEFAULT_MODELS_DIR.resolve()
+    raw = str(path).strip()
+    if not raw:
+        return DEFAULT_MODELS_DIR.resolve()
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = (ROOT / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+    return candidate
+
+
+def set_models_dir(path: str | Path | None = None) -> Path:
+    """Point runtime inference at *path* (onnx/ + vocoder/ subfolders). Returns resolved path."""
+    resolved = resolve_models_dir(path)
+    _sync_model_paths(resolved)
+    return resolved
+
+
+def models_dir_display(path: Path | None = None) -> str:
+    """Human-friendly models path for GUI (relative to ROOT when possible)."""
+    target = (path or MODELS_DIR).resolve()
+    try:
+        return str(target.relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(target)
 
 
 def ensure_ffmpeg_on_path() -> None:
@@ -173,7 +218,7 @@ def onnx_ready_report() -> str:
         "legacy": "ZIPVOICE_ONNX_INT8",
         "default": "mặc định",
     }
-    lines = ["### ONNX quant readiness (`models/onnx/`)"]
+    lines = [f"### ONNX quant readiness (`{models_dir_display()}/onnx/`)"]
     lines.append(
         f"- **Active mode:** `{active}` *(via {source_labels.get(source, source)})*"
     )
@@ -302,7 +347,7 @@ def vocoder_onnx_ready() -> bool:
 def vocoder_deploy_instructions() -> str:
     """How to obtain mel_spec_24khz.onnx for deployment."""
     return (
-        f"Đặt vocoder ONNX 100 mel tại `models/vocoder/{VOCODER_ONNX_FILENAME}`.\n"
+        f"Đặt vocoder ONNX 100 mel tại `{models_dir_display()}/vocoder/{VOCODER_ONNX_FILENAME}`.\n"
         "  • Export từ ZipVoice-Vietnamese-GUI: Tab Export → bật **Export Vocos ONNX**\n"
         "  • Hoặc copy file đã export từ repo PyTorch sang repo ONNX-GUI\n"
         "  • Hoặc chạy `git lfs pull` nếu file bundled trong repo\n"
@@ -317,20 +362,22 @@ def models_ready_report() -> list[str]:
     for name in _missing_bundled_onnx_files(ONNX_DIR, mode):
         path = ONNX_DIR / name
         if _is_lfs_pointer(path):
-            missing.append(f"models/onnx/{name} (Git LFS pointer — chạy: git lfs pull)")
+            missing.append(
+                f"{models_dir_display()}/onnx/{name} (Git LFS pointer — chạy: git lfs pull)"
+            )
         else:
-            missing.append(f"models/onnx/{name} (quant mode `{mode}`)")
+            missing.append(f"{models_dir_display()}/onnx/{name} (quant mode `{mode}`)")
 
     if not vocoder_onnx_ready():
         voc_path = VOCODER_ONNX
         if _is_lfs_pointer(voc_path):
             missing.append(
-                f"models/vocoder/{VOCODER_ONNX_FILENAME} "
+                f"{models_dir_display()}/vocoder/{VOCODER_ONNX_FILENAME} "
                 "(Git LFS pointer — chạy: git lfs pull)"
             )
         else:
             missing.append(
-                f"models/vocoder/{VOCODER_ONNX_FILENAME} "
+                f"{models_dir_display()}/vocoder/{VOCODER_ONNX_FILENAME} "
                 "(100 mel — export ZipVoice-Vietnamese-GUI hoặc git lfs pull)"
             )
     return missing
@@ -347,3 +394,6 @@ def models_ready(
     use_int8: bool | None = None,
 ) -> bool:
     return onnx_ready(quant_mode, use_int8=use_int8) and vocoder_onnx_ready()
+
+
+_sync_model_paths(DEFAULT_MODELS_DIR)
